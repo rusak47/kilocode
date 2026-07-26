@@ -5,6 +5,7 @@ import { EventV2 } from "@opencode-ai/core/event"
 import { Installation } from "@/installation"
 import { disconnect } from "@/kilocode/server/sse" // kilocode_change
 import { copied } from "@/kilocode/event-wire" // kilocode_change
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import { disposeAllInstancesAndEmitGlobalDisposed } from "@/server/global-lifecycle"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Effect, Queue, Schema } from "effect"
@@ -84,6 +85,7 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
     const config = yield* Config.Service
     const installation = yield* Installation.Service
     const bridge = yield* EffectBridge.make()
+    const flags = yield* RuntimeFlags.Service
 
     const health = Effect.fn("GlobalHttpApi.health")(function* () {
       return { healthy: true as const, version: InstallationVersion }
@@ -95,7 +97,14 @@ export const globalHandlers = HttpApiBuilder.group(RootHttpApi, "global", (handl
     })
 
     const configGet = Effect.fn("GlobalHttpApi.configGet")(function* () {
-      return yield* config.getGlobal()
+      const info = yield* config.getGlobal()
+      return {
+        ...info,
+        experimental: {
+          ...info.experimental,
+          subagent_interrupt: flags.experimentalSubagentInterrupt,
+        },
+      }
     })
 
     const configUpdate = Effect.fn("GlobalHttpApi.configUpdate")(function* (ctx) {

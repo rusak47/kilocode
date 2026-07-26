@@ -15,6 +15,7 @@ import { GlobTool } from "./glob"
 import { GrepTool } from "./grep"
 import { ReadTool } from "./read"
 import { TaskTool } from "./task"
+import { TaskSteerTool, TaskCancelTool, TaskAbortTool } from "./task-interrupt"
 import { Database } from "@opencode-ai/core/database/database"
 import { TodoWriteTool } from "./todo"
 import { WebFetchTool } from "./webfetch"
@@ -70,6 +71,7 @@ import { SessionStatus } from "@/session/status" // kilocode_change
 import { KiloSessions } from "@/kilo-sessions/kilo-sessions" // kilocode_change - provide KiloSessions.Service so the notify_user tool's init resolves
 import { Git } from "@/git" // kilocode_change
 import { BackgroundJob } from "@/background/job"
+import { Interrupt } from "../session/interrupt"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import * as ToolNetwork from "@/kilocode/sandbox/network" // kilocode_change
 import { MemoryService } from "@kilocode/kilo-memory/effect/service" // kilocode_change
@@ -136,6 +138,9 @@ const layer = Layer.effect(
 
     const invalid = yield* InvalidTool
     const task = yield* TaskTool
+    const taskSteer = yield* TaskSteerTool
+    const taskCancel = yield* TaskCancelTool
+    const taskAbort = yield* TaskAbortTool
     const read = yield* ReadTool
     const question = yield* QuestionTool
     const todo = yield* TodoWriteTool
@@ -280,6 +285,9 @@ const layer = Layer.effect(
           edit: Tool.init(edit),
           write: Tool.init(writetool),
           task: Tool.init(task),
+          task_steer: Tool.init(taskSteer),
+          task_cancel: Tool.init(taskCancel),
+          task_abort: Tool.init(taskAbort),
           fetch: Tool.init(webfetch),
           todo: Tool.init(todo),
           search: Tool.init(websearch),
@@ -318,6 +326,7 @@ const layer = Layer.effect(
               tool.edit,
               tool.write,
               tool.task,
+              ...(flags.experimentalSubagentInterrupt ? [tool.task_steer, tool.task_cancel, tool.task_abort] : []),
               tool.fetch,
               tool.todo,
               tool.search,
@@ -541,6 +550,7 @@ export const node = LayerNode.suspend(() =>
       Config.node,
       Plugin.node,
       Question.node,
+      Permission.node,
       Todo.node,
       Agent.node,
       Skill.node,
@@ -553,6 +563,7 @@ export const node = LayerNode.suspend(() =>
       Instruction.node,
       FSUtil.node,
       EventV2Bridge.node,
+      Interrupt.node,
       network,
       CrossSpawnSpawner.node,
       Format.node,

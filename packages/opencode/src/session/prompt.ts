@@ -30,6 +30,7 @@ import { withStatics } from "@opencode-ai/core/schema" // kilocode_change
 import { SessionID, MessageID, PartID } from "./schema"
 import type { NotFoundError } from "@/storage/storage"
 import { MessageV2 } from "./message-v2"
+import { Interrupt } from "./interrupt"
 import { SessionRevert } from "./revert"
 import { Session } from "./session"
 import { Agent } from "../agent/agent"
@@ -189,6 +190,7 @@ export const layer = Layer.effect(
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
     const cache = Option.getOrUndefined(yield* Effect.serviceOption(RepositoryCache.Service)) // kilocode_change
+    const interrupt = yield* Interrupt.Service
     const { db } = database
     // kilocode_change start
     const ops = Effect.fn("SessionPrompt.ops")(function* (sessionID: SessionID) {
@@ -1538,6 +1540,7 @@ export const layer = Layer.effect(
       const ctx = yield* InstanceState.context
       let structured: unknown
       let step = 0
+        let cancelDeadline: number | undefined
       const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
       while (true) {
@@ -1554,11 +1557,75 @@ export const layer = Layer.effect(
 
         // kilocode_change start - select loop state by chronology after retained-tail projection
         const latest = KiloSessionMessageOrder.latest(msgs)
-        const { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = latest
+        let { user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = latest
         // kilocode_change end
 
         if (input.resume && step === 0 && KiloSessionContinuation.target(msgs) !== input.resume) break // kilocode_change
         if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+
+          // --- subagent interrupt: consume a pending steer/cancel at this turn boundary ---
+          const pendingInterrupt = yield* interrupt.consume(sessionID)
+          if (Option.isSome(pendingInterrupt)) {
+            const frame =
+              pendingInterrupt.value.intent === "cancel"
+                ? Interrupt.renderCancel(pendingInterrupt.value.reason)
+                : Interrupt.renderSteer(pendingInterrupt.value.reason)
+            const interruptMsg: SessionV1.User = {
+              id: MessageID.ascending(),
+              sessionID,
+              role: "user",
+              time: { created: Date.now() },
+              agent: lastUser.agent,
+              model: lastUser.model,
+            }
+            yield* sessions.updateMessage(interruptMsg)
+            // The synthetic frame is the tested model instruction; it stays hidden from the TUI.
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: interruptMsg.id,
+              sessionID,
+              type: "text",
+              text: frame,
+              synthetic: true,
+            } satisfies SessionV1.TextPart)
+            // The non-synthetic line is the visible transcript marker the user sees.
+            // Origin ("user" / "parent") attributes the marker to who issued it.
+            // metadata.interrupt tags the part so the TUI renders it as a distinct
+            // system-event line rather than as normal user prose.
+            const visibleLine = Interrupt.renderMarker({
+              intent: pendingInterrupt.value.intent,
+              origin: pendingInterrupt.value.origin,
+              reason: pendingInterrupt.value.reason,
+            })
+            yield* sessions.updatePart({
+              id: PartID.ascending(),
+              messageID: interruptMsg.id,
+              sessionID,
+              type: "text",
+              text: visibleLine,
+              synthetic: false,
+              metadata: {
+                interrupt: {
+                  intent: pendingInterrupt.value.intent,
+                  origin: pendingInterrupt.value.origin,
+                },
+              },
+            } satisfies SessionV1.TextPart)
+            // Reload so the new user turn is the latest and the break-check below runs a turn on it.
+            msgs = yield* MessageV2.filterCompactedEffect(sessionID).pipe(Effect.provideService(Database.Service, database))
+            ;({ user: lastUser, assistant: lastAssistant, finished: lastFinished, tasks } = MessageV2.latest(msgs))
+            if (!lastUser) throw new Error("No user message found in stream after interrupt injection.")
+            if (pendingInterrupt.value.intent === "cancel") {
+              cancelDeadline = step + Interrupt.CANCEL_GRACE_TURNS
+              yield* interrupt.recordTerminal({ sessionID, reason: pendingInterrupt.value.reason })
+            }
+          }
+
+          // Force-break a cancel that the model didn't honor within the grace window.
+          if (cancelDeadline !== undefined && step >= cancelDeadline) {
+            yield* Effect.logInfo("cancel grace exceeded, breaking loop", { "session.id": sessionID })
+            break
+          }
 
         const lastAssistantMsg = msgs.findLast(
           (msg) => msg.info.role === "assistant" && msg.info.id === lastAssistant?.id,
@@ -2667,6 +2734,7 @@ export const node = LayerNode.make({
     Database.node,
     Question.node, // kilocode_change
     repositoryCacheNode, // kilocode_change
+    Interrupt.node,
   ],
 })
 

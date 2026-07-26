@@ -8,6 +8,7 @@ import { ModelV2 } from "@opencode-ai/core/model"
 import { filterPromptTrainingModels, nonEmptyProviders } from "@/kilocode/provider/model-filter"
 // kilocode_change end
 import { Provider } from "@/provider/provider"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import * as InstanceState from "@/effect/instance-state"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -19,9 +20,19 @@ export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (h
     const providerSvc = yield* Provider.Service
     const configSvc = yield* Config.Service
     const auth = yield* Auth.Service // kilocode_change
+    const flags = yield* RuntimeFlags.Service //adopt_pr 32425
 
     const get = Effect.fn("ConfigHttpApi.get")(function* () {
-      return yield* configSvc.get()
+      const info = yield* configSvc.get()
+      // Surface the subagent-interrupt runtime flag in the TUI-visible config.
+      // The HTTP endpoint (and TUI UX) is off-by-default and gated by env var.
+      return {
+        ...info,
+        experimental: {
+          ...info.experimental,
+          subagent_interrupt: flags.experimentalSubagentInterrupt,
+        },
+      }
     })
 
     const update = Effect.fn("ConfigHttpApi.update")(function* (ctx) {

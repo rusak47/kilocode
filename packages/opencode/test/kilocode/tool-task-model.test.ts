@@ -27,6 +27,7 @@ import { Provider } from "../../src/provider/provider"
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
 import { Truncate } from "../../src/tool/truncate"
 import { ToolRegistry } from "../../src/tool/registry"
+import { Interrupt } from "../../src/session/interrupt"
 import { disposeAllInstances, provideTmpdirInstance } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
 
@@ -120,6 +121,7 @@ const it = testEffect(
       Truncate.node,
       Provider.node,
       ToolRegistry.node,
+      Interrupt.node,
       Database.node,
     ]),
   ),

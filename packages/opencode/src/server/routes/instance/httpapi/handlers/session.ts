@@ -5,6 +5,7 @@ import { KiloSessionPromptQueue } from "@/kilocode/session/prompt-queue" // kilo
 import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { KiloViewers } from "@/kilocode/presence/service" // kilocode_change
 import { Agent } from "@/agent/agent"
+import { BackgroundJob } from "@/background/job"
 import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { Command } from "@/command"
@@ -18,9 +19,11 @@ import { SessionRevert } from "@/session/revert"
 import { SessionRunState } from "@/session/run-state"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
+import { Interrupt } from "@/session/interrupt"
 import { Todo } from "@/session/todo"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 import { NamedError } from "@opencode-ai/core/util/error"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Cause, Effect, Option, Schema, Scope } from "effect"
 import * as Stream from "effect/Stream"
 import { InstanceState } from "@/effect/instance-state"
@@ -34,6 +37,7 @@ import {
   DiffQuery,
   ForkPayload,
   InitPayload,
+  InterruptPayload,
   ListQuery,
   MessagesQuery,
   PermissionResponsePayload,
@@ -65,9 +69,12 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const permissionSvc = yield* Permission.Service
     const statusSvc = yield* SessionStatus.Service
     const todoSvc = yield* Todo.Service
+    const interruptSvc = yield* Interrupt.Service
+    const backgroundSvc = yield* BackgroundJob.Service
     const summary = yield* SessionSummary.Service
     const events = yield* EventV2Bridge.Service
     const viewers = yield* KiloViewers.Service // kilocode_change
+    const flags = yield* RuntimeFlags.Service
     const scope = yield* Scope.Scope
 
     const list = Effect.fn("SessionHttpApi.list")(function* (ctx: { query: typeof ListQuery.Type }) {
@@ -242,6 +249,42 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       return true
     })
     // kilocode_change end
+
+    const interrupt = Effect.fn("SessionHttpApi.interrupt")(function* (ctx: {
+      params: { sessionID: SessionID }
+      payload: typeof InterruptPayload.Type
+    }) {
+      if (!flags.experimentalSubagentInterrupt) return yield* new HttpApiError.BadRequest({})
+      const target = yield* session
+        .get(ctx.params.sessionID)
+        .pipe(Effect.mapError(() => new HttpApiError.BadRequest({})))
+      // This endpoint is the subagent escape-with-reason path. Injecting into a
+      // root session (no parentID) would let any caller steer the main session.
+      if (!target.parentID) return yield* new HttpApiError.BadRequest({})
+      // Reject if the child is not currently running. Without this guard, steer
+      // and cancel would leave a stale pending interrupt on a finished child;
+      // abort would record a terminal on a child that has already settled. The
+      // task_steer/task_cancel/task_abort tools already make this same
+      // running-only guarantee via resolveChild in task-interrupt.ts.
+      const job = yield* backgroundSvc.get(ctx.params.sessionID)
+      if (!job || job.status !== "running") return yield* new HttpApiError.BadRequest({})
+      if (ctx.payload.intent === "abort") {
+        // Abort bypasses the pending-intent slot — it writes a visible marker,
+        // records a terminal reason, and cancels the BackgroundJob immediately.
+        yield* Interrupt.abortChild(
+          { sessions: session, background: backgroundSvc, interrupt: interruptSvc },
+          { childID: ctx.params.sessionID, origin: "user", reason: ctx.payload.reason },
+        )
+      } else {
+        yield* interruptSvc.request({
+          sessionID: ctx.params.sessionID,
+          intent: ctx.payload.intent,
+          reason: ctx.payload.reason,
+          origin: "user",
+        })
+      }
+      return true
+    })
 
     const init = Effect.fn("SessionHttpApi.init")(function* (ctx: {
       params: { sessionID: SessionID }
@@ -475,6 +518,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       .handle("update", update)
       .handleRaw("fork", forkRaw) // kilocode_change - carry upstream bodyless full-session fork support
       .handle("abort", abort)
+      .handle("interrupt", interrupt)
       .handle("init", init)
       .handle("share", share)
       .handle("unshare", unshare)

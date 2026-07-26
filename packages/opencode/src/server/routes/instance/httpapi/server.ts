@@ -37,6 +37,7 @@ import { KiloViewers } from "@/kilocode/presence/service"
 // kilocode_change end
 import { SessionCompaction } from "@/session/compaction"
 import { Instruction } from "@/session/instruction"
+import { Interrupt } from "@/session/interrupt"
 import { LLM } from "@/session/llm"
 import { SessionProcessor } from "@/session/processor"
 import { SessionPrompt } from "@/session/prompt"
@@ -273,6 +274,7 @@ const app = LayerNode.group([
   SessionRevert.node,
   SessionSummary.node,
   SessionPrompt.node,
+  Interrupt.node,
   Instruction.node,
   LLM.node,
   LSP.node,
