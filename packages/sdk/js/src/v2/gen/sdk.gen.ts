@@ -643,6 +643,8 @@ import type {
   WorktreeResetErrors,
   WorktreeResetInput,
   WorktreeResetResponses,
+  SessionInterruptErrors,
+  SessionInterruptResponses,
 } from "./types.gen.js"
 
 export type Options<
@@ -5268,6 +5270,47 @@ export class Session2 extends HeyApiClient {
     )
     return (options?.client ?? this.client).post<SessionViewedResponses, SessionViewedErrors, ThrowOnError>({
       url: "/session/viewed",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Interrupt session
+   *
+   * Steer or gracefully cancel an active session (human/operator path; not permission-gated).
+   */
+  public interrupt<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      intent?: "steer" | "cancel" | "abort"
+      reason?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "intent" },
+            { in: "body", key: "reason" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionInterruptResponses, SessionInterruptErrors, ThrowOnError>({
+      url: "/session/{sessionID}/interrupt",
       ...options,
       ...params,
       headers: {

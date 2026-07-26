@@ -7,6 +7,8 @@ import { HttpApi, HttpApiBuilder } from "effect/unstable/httpapi"
 import { Auth } from "../../../src/auth"
 import { KiloViewers } from "../../../src/kilocode/presence/service"
 import { InstanceStore } from "../../../src/project/instance-store"
+import { Interrupt } from "../../../src/session/interrupt"
+import { RuntimeFlags } from "../../../src/effect/runtime-flags"
 import { Session } from "../../../src/session/session"
 import { ModelCache } from "../../../src/provider/model-cache"
 import { Provider } from "../../../src/provider/provider"
@@ -126,6 +128,8 @@ const layer = HttpRouter.serve(
     Layer.mock(InstanceStore.Service)({}),
     Layer.mock(Session.Service)({}),
     Layer.mock(KiloViewers.Service)({}),
+    Layer.mock(Interrupt.Service)({}),
+    RuntimeFlags.layer({}),
   ]),
   Layer.provideMerge(NodeHttpServer.layerTest),
 )

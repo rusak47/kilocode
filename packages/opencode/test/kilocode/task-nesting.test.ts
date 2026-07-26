@@ -26,6 +26,7 @@ import { Provider } from "../../src/provider/provider"
 import { Permission } from "../../src/permission"
 import { TaskTool, type TaskPromptOps } from "../../src/tool/task"
 import type { Context } from "../../src/tool/tool"
+import { Interrupt } from "../../src/session/interrupt"
 import { KiloSessionPrompt } from "../../src/kilocode/session/prompt"
 import * as SandboxPolicy from "../../src/kilocode/sandbox/policy"
 import { Truncate } from "../../src/tool/truncate"
@@ -56,6 +57,7 @@ const it = testEffect(
       Truncate.node,
       Provider.node,
       ToolRegistry.node,
+      Interrupt.node,
       Database.node,
     ]),
   ),

@@ -48,6 +48,8 @@ export class Service extends ConfigService.Service<Service>()("@opencode/Runtime
   experimentalBackgroundSubagents: Config.boolean("KILO_EXPERIMENTAL_BACKGROUND_SUBAGENTS").pipe(
     Config.withDefault(true),
   ),
+  experimentalSubagentInterrupt: enabledByExperimental("OPENCODE_EXPERIMENTAL_SUBAGENT_INTERRUPT"),
+
   // kilocode_change end
   experimentalLspTy: bool("KILO_EXPERIMENTAL_LSP_TY"),
   experimentalLspTool: enabledByExperimental("KILO_EXPERIMENTAL_LSP_TOOL"),
