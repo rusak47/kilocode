@@ -181,7 +181,9 @@ async function memoryText(input: {
   const ctl = new AbortController()
   const ms = Math.max(1, input.timeoutMs)
   const params = consolidationPrompt({ model: input.source, options: input.options, system: input.system })
-  const openai = input.source.providerID === "openai" && input.source.api.npm === "@ai-sdk/openai"
+  const openai =
+    (input.source.providerID === "openai" && input.source.api.npm === "@ai-sdk/openai") ||
+    input.source.api.npm === "@ai-sdk/openai-compatible"
   const common = {
     model: input.language,
     ...(params.system ? { system: params.system } : {}),
@@ -191,6 +193,7 @@ async function memoryText(input: {
     temperature: input.temperature,
     topP: input.topP,
     topK: input.topK,
+    maxTokens: 4096,
   }
   const work = async () => {
     if (!openai) return generateText(common)
@@ -223,8 +226,8 @@ async function memoryText(input: {
 
 function modelOptions(model: Provider.Model, language: LanguageModelV3) {
   const options = consolidationOptions(model)
-  // No explicit output cap: valid output is already bounded by the compact-JSON prompt, the parser's
-  // 64KB guard, and the capture timeout — and some backends reject explicit caps outright.
+  // Cap output to 4096 tokens: enough for the 16-op JSON schema but prevents
+  // free-tier model defaults (512 tokens) from truncating the response mid-JSON.
   const temperature = ProviderTransform.temperature(model)
   const topP = ProviderTransform.topP(model)
   const topK = ProviderTransform.topK(model)
