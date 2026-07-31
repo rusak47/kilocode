@@ -592,4 +592,45 @@ describe("run session data", () => {
       }),
     ])
   })
+
+  // kilocode_change start - no known context limit disables auto-compaction; warn once and drop the bare usage indicator
+  test("warns once when the model has no known context limit", () => {
+    let data = createSessionData()
+    let out = reduce(data, assistant("msg-1"))
+
+    expect(out.commits).toEqual([
+      expect.objectContaining({
+        kind: "system",
+        text: expect.stringContaining("Auto-compaction disabled"),
+      }),
+    ])
+
+    out = reduce(out.data, assistant("msg-2"))
+    expect(out.commits).toEqual([])
+  })
+
+  test("omits the usage indicator when the model has no known context limit", () => {
+    const out = reduce(createSessionData(), assistant("msg-1"))
+    expect(out.footer?.patch).toEqual({ status: "assistant responding" })
+  })
+
+  test("keeps the usage indicator and no warning when the model has a known context limit", () => {
+    const reduceWithLimits = (data: ReturnType<typeof createSessionData>, event: unknown) =>
+      reduceSessionData({
+        data,
+        event: event as Event,
+        sessionID: "session-1",
+        thinking: true,
+        limits: { "openai/gpt-5": 100_000 },
+      })
+
+    const out = reduceWithLimits(createSessionData(), assistant("msg-1"))
+
+    expect(out.commits).toEqual([])
+    expect(out.footer?.patch).toEqual({
+      status: "assistant responding",
+      usage: "2 (0%)",
+    })
+  })
+  // kilocode_change end
 })
