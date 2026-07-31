@@ -5,20 +5,44 @@ import type { Provider } from "@/provider/provider"
 import { ProviderTransform } from "@/provider/transform"
 import type { MessageV2 } from "./message-v2"
 import { KiloSessionOverflow } from "@/kilocode/session/overflow" // kilocode_change
+import * as Log from "@opencode-ai/core/util/log" // kilocode_change
 
 const COMPACTION_BUFFER = 20_000
+const MIN_INPUT_RATIO = 0.1 // kilocode_change
+const log = Log.create({ service: "kilocode.session.overflow" }) // kilocode_change
 
-export function usable(input: { cfg: ConfigV1.Info; model: Provider.Model; outputTokenMax?: number }) {
+export function usable(input: { cfg: ConfigV1.Info; model: Provider.Model; outputTokenMax?: number }) { // kilocode_change start - sane limits, caps, and diagnostics for unusable/tiny model limits
   const context = input.model.limit.context
   if (context === 0) return 0
 
+  const maxOutput = ProviderTransform.maxOutputTokens(input.model, input.outputTokenMax)
+  const inputLimit = input.model.limit.input
+  const effectiveInput = inputLimit && inputLimit >= context * MIN_INPUT_RATIO ? inputLimit : context
+
+  if (!inputLimit) {
+    return Math.max(0, effectiveInput - maxOutput)
+  }
+
   const reserved =
     input.cfg.compaction?.reserved ??
-    Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model, input.outputTokenMax))
-  return input.model.limit.input
-    ? Math.max(0, input.model.limit.input - reserved)
-    : Math.max(0, context - ProviderTransform.maxOutputTokens(input.model, input.outputTokenMax))
-}
+    Math.min(COMPACTION_BUFFER, maxOutput)
+  const cappedReserved = Math.min(reserved, Math.max(0, effectiveInput) / 2)
+  const result = Math.max(0, effectiveInput - cappedReserved)
+  if (effectiveInput !== inputLimit) {
+    log.debug("usable input override", {
+      model: input.model.id,
+      provider: input.model.providerID,
+      context,
+      inputLimit,
+      effectiveInput,
+      maxOutput,
+      reserved,
+      cappedReserved,
+      result,
+    })
+  }
+  return result
+} // kilocode_change end
 
 export function isOverflow(input: {
   cfg: ConfigV1.Info

@@ -53,6 +53,7 @@ const CommitMessageSchema = Schema.optional(
       description:
         "Custom system prompt for AI commit message generation. When set, replaces the default conventional commits prompt entirely.",
     }),
+    // kilocode_change start
   }),
 ).annotate({ description: "Configuration for AI-generated commit messages" })
 // kilocode_change end
@@ -244,7 +245,7 @@ export const Info = Schema.Struct({
   permission: Schema.optional(ConfigPermissionV1.Info),
   tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
   web_search: Schema.optional(Schema.Boolean).annotate({
-    description: "Make web search available to models from all providers (default: false)",
+    description: "Make web search available models from all providers (default: false)",
   }), // kilocode_change
   attachment: Schema.optional(ConfigAttachmentV1.Info).annotate({
     description: "Attachment processing configuration, including image size limits and resizing behavior",
@@ -290,6 +291,11 @@ export const Info = Schema.Struct({
       reserved: Schema.optional(NonNegativeInt).annotate({
         description: "Token buffer for compaction. Leaves enough window to avoid overflow during compaction.",
       }),
+      // kilocode_change start
+      chunk_concurrency: Schema.optional(NonNegativeInt).annotate({
+        description: "Number of concurrent LLM requests during chunk-based compaction (default: 3). Increase for faster compaction on fast providers; lower it (e.g. 1) when free-tier models return rate-limit errors.",
+      }),
+      // kilocode_change end
     }),
   ),
   experimental: Schema.optional(
