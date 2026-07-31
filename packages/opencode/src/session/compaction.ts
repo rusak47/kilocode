@@ -192,7 +192,7 @@ export interface Interface {
     sessionID: SessionID
     auto: boolean
     overflow?: boolean
-  }) => Effect.Effect<"continue" | "stop">
+  }) => Effect.Effect<"continue" | "continue-partial" | "stop"> // kilocode_change
   readonly create: (input: {
     sessionID: SessionID
     agent: string
@@ -689,6 +689,7 @@ const layer = Layer.effect(
       }
 
       // kilocode_change start - compaction already invalidates cache, so collapse stale tool outputs too
+      // and treat partial compaction success as a valid continuation
       if (processor.message.error) {
         // The empty-summary copy is written only for the empty-summary failure:
         // a retryable failure with no rendered part is dropped by clients, so
@@ -709,7 +710,7 @@ const layer = Layer.effect(
         }
         return "stop"
       }
-      if (fallback === "continue") {
+      if (fallback === "continue" || fallback === "continue-partial") {
         const summary = summaryText(
           (yield* session.messages({ sessionID: input.sessionID }).pipe(Effect.orDie)).find(
             (item) => item.info.id === msg.id,

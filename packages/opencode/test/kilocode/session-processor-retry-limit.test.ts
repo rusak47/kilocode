@@ -165,10 +165,11 @@ describe("session processor retry limit", () => {
           const test = yield* TestLLM
           const processors = yield* SessionProcessor.Service
           const session = yield* Session.Service
+          const events = yield* EventV2Bridge.Service
 
-          yield* Effect.forEach(Array.from({ length: limit + 1 }), () => test.push(Stream.fail(retryable429())), {
-            discard: true,
-          })
+        yield* Effect.forEach(Array.from({ length: limit + 1 }), () => test.push(Stream.fail(retryable429())), {
+          discard: true,
+        })
           yield* test.push(Stream.fail(new Error("unexpected extra llm call")))
 
           const delay = spyOn(SessionRetry, "delay").mockReturnValue(0)
@@ -199,21 +200,40 @@ describe("session processor retry limit", () => {
           yield* session.updateMessage(msg)
 
           const mdl = model()
+          const hooks = { gate: 0, retry: 0 }
+          const states: number[] = []
+          const off = yield* events.listen((evt) => {
+            if (evt.type !== SessionStatus.Event.Status.type) return Effect.void
+            const data = evt.data as typeof SessionStatus.Event.Status.data.Type
+            if (data.sessionID === chat.id && data.status.type === "retry") states.push(data.status.attempt)
+            return Effect.void
+          })
           const handle = yield* processors.create({
             assistantMessage: msg,
             sessionID: chat.id,
             model: mdl,
+            gate: (effect) =>
+              Effect.sync(() => {
+                hooks.gate++
+              }).pipe(Effect.andThen(effect)),
+            retry: (info) => {
+              expect(info.error && MessageV2.APIError.isInstance(info.error)).toBe(true)
+              if (info.error && MessageV2.APIError.isInstance(info.error)) expect(info.error.data.statusCode).toBe(429)
+              hooks.retry++
+              if (hooks.retry === 1) throw new Error("synchronous retry hook failure")
+              return Effect.die(new Error("retry hook defect"))
+            },
           })
 
-          const input: LLM.StreamInput = {
-            user: parent as MessageV2.User,
-            sessionID: chat.id,
-            model: mdl,
-            agent: { name: "code", mode: "primary", permission: [], options: {} } as any,
-            system: [],
-            messages: [],
-            tools: {},
-          }
+        const input: LLM.StreamInput = {
+          user: parent as MessageV2.User,
+          sessionID: chat.id,
+          model: mdl,
+          agent: { name: "code", mode: "primary", permission: [], options: {} } as any,
+          system: [],
+          messages: [],
+          tools: {},
+        }
 
           const expected = MessageV2.fromError(retryable429(), { providerID: ProviderV2.ID.make("test") })
           try {
@@ -222,15 +242,18 @@ describe("session processor retry limit", () => {
 
             expect(result).toBe("stop")
             expect(calls).toBe(limit + 1)
-            expect(handle.message.error).toStrictEqual(expected)
+              expect(hooks).toEqual({ gate: 3, retry: 2 })
+              expect(states).toStrictEqual([1, 2])
+              expect(handle.message.error).toStrictEqual(expected)
           } finally {
-            delay.mockRestore()
+              yield* off
+              delay.mockRestore()
           }
         }),
       { git: true },
     )
 
-  it.live("stops after two retries with the normalized retryable error", () => run(2), 15000)
+  it.live("keeps provider retries alive when the optional retry hook fails", () => run(2), 15000)
 
   it.live("honors a configured retry limit above the upstream default", () => run(10), 15000)
 
