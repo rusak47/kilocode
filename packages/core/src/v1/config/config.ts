@@ -52,6 +52,20 @@ const CommitMessageSchema = Schema.optional(
     }),
   }),
 ).annotate({ description: "Configuration for AI-generated commit messages" })
+
+/** Schema for Kilo memory consolidation configuration. */
+const MemorySchema = Schema.optional(
+  Schema.Struct({
+    max_output_tokens: Schema.optional(PositiveInt).annotate({
+      description:
+        "Maximum output tokens for memory consolidation model calls. Unset (default) sends no explicit cap and the provider default applies; set it to protect free-tier output limits or to bound cost.",
+    }),
+    model: Schema.optional(Schema.String).annotate({
+      description:
+        "Provider/model override (providerID/modelID) for memory consolidation. Unset uses the session model.",
+    }),
+  }),
+).annotate({ description: "Kilo memory consolidation configuration" })
 // kilocode_change end
 
 export const Info = Schema.Struct({
@@ -243,6 +257,9 @@ export const Info = Schema.Struct({
     Schema.Struct({ url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }) }),
   ),
   commit_message: CommitMessageSchema, // kilocode_change
+  // kilocode_change start - memory consolidation configuration
+  memory: MemorySchema,
+  // kilocode_change end
   tool_output: Schema.optional(
     Schema.Struct({
       max_lines: Schema.optional(PositiveInt).annotate({
