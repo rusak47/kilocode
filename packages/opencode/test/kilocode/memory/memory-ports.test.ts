@@ -31,14 +31,15 @@ function mdl(id = mid): Provider.Model {
   } as unknown as Provider.Model
 }
 
-function lang(outputs = ["{}"]): LanguageModelV3 {
+function lang(outputs = ["{}"], caps?: (number | undefined)[]): LanguageModelV3 {
   let idx = 0
   return {
     specificationVersion: "v3",
     provider: "test",
     modelId: "fake-memory-model",
     supportedUrls: {},
-    doGenerate: async () => {
+    doGenerate: async (args: { maxOutputTokens?: number }) => {
+      caps?.push(args.maxOutputTokens)
       const text = outputs[idx++] ?? outputs.at(-1) ?? "{}"
       return {
         content: [{ type: "text", text }],
@@ -57,7 +58,7 @@ function lang(outputs = ["{}"]): LanguageModelV3 {
   } as unknown as LanguageModelV3
 }
 
-function provider(input: { outputs?: string[]; seen?: string[] } = {}): Provider.Interface {
+function provider(input: { outputs?: string[]; seen?: string[]; caps?: (number | undefined)[] } = {}): Provider.Interface {
   const base = mdl()
   const mem = mdl(ModelV2.ID.make("memory-config-model"))
   const info = {
@@ -78,7 +79,7 @@ function provider(input: { outputs?: string[]; seen?: string[] } = {}): Provider
     },
     getLanguage: (model) => {
       input.seen?.push(model.id)
-      return Effect.succeed(lang(input.outputs))
+      return Effect.succeed(lang(input.outputs, input.caps))
     },
     closest: () => Effect.succeed({ providerID: pid, modelID: base.id }),
     getSmallModel: () => Effect.succeed(mem),
@@ -317,5 +318,25 @@ describe("memory ports", () => {
 
     expect(handles.size).toBe(1)
     expect(cleared.size).toBe(1)
+  })
+
+  test("model port forwards the output cap as maxTokens and omits it when unset", async () => {
+    const caps: (number | undefined)[] = []
+    const port = MemoryModel.port({ provider: provider({ outputs: ["{}", "{}", "{}"], caps }) })
+
+    for (const maxOutputTokens of [2048, 8192, undefined]) {
+      const resolved = await Effect.runPromise(port.resolve({ session: ref }))
+      await port.run({
+        handle: resolved.handle,
+        system: "system",
+        prompt: "prompt",
+        timeoutMs: 30_000,
+        maxOutputTokens,
+      })
+    }
+
+    // mdl() declares limit.output = 4000; the cap is clamped to that model limit
+    // and is undefined (no maxTokens sent) when unset.
+    expect(caps).toEqual([2048, 4000, undefined])
   })
 })
