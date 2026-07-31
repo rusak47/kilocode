@@ -76,6 +76,7 @@ const AgentSchema = Schema.StructWithRest(
     temperature: Schema.optional(Schema.NullOr(Schema.Finite)), // kilocode_change - nullable for delete sentinel
     top_p: Schema.optional(Schema.NullOr(Schema.Finite)), // kilocode_change - nullable for delete sentinel
     prompt: Schema.optional(Schema.NullOr(Schema.String)), // kilocode_change - nullable for delete sentinel
+    disableSoul: Schema.optional(Schema.Boolean), // kilocode_change
     tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)).annotate({
       description: "@deprecated Use 'permission' field instead",
     }),
@@ -118,6 +119,7 @@ const KNOWN_KEYS = new Set([
   "model",
   "variant",
   "prompt",
+  "disableSoul", // kilocode_change
   "description",
   "temperature",
   "top_p",

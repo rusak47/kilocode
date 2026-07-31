@@ -69,8 +69,8 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
   const isOpenaiOauth = input.provider.id === "openai" && input.auth?.type === "oauth"
   const system = [
     [
-      // kilocode_change start - soul defines core identity and personality
-      ...(isOpenaiOauth ? [] : [SystemPrompt.soul()]),
+      // kilocode_change start - soul defines core identity and personality; skip when agent disables it
+      ...(isOpenaiOauth || input.agent.disableSoul ? [] : [SystemPrompt.soul()]),
       // kilocode_change end
       ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
       ...input.system,
@@ -116,10 +116,11 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
     delete options.include
   }
   if (isOpenaiOauth) {
-  // kilocode_change start - prepend soul to instructions
-  options.instructions = SystemPrompt.soul() + "\n" + system.join("\n")
+  // kilocode_change start - prepend soul to instructions; skip when agent disables it
+  options.instructions =
+    (input.agent.disableSoul ? "" : SystemPrompt.soul() + "\n") + system.join("\n")
   // kilocode_change end
-}
+  }
 
   const messages =
     isOpenaiOauth || input.isWorkflow

@@ -66,6 +66,7 @@ export const Info = Schema.Struct({
   ),
   variant: Schema.optional(Schema.String),
   prompt: Schema.optional(Schema.String),
+  disableSoul: Schema.optional(Schema.Boolean), // kilocode_change
   options: Schema.Record(Schema.String, Schema.Unknown),
   requirements: Schema.optional(AgentRequirements.Requirements), // kilocode_change
   steps: Schema.optional(Schema.Finite),
@@ -375,6 +376,7 @@ export const layer = Layer.effect(
           item.displayName = value.displayName ?? item.displayName
           item.source = value.source ?? item.source
           item.requirements = value.requirements ?? item.requirements
+          item.disableSoul = value.disableSoul ?? item.disableSoul
           // kilocode_change end
           item.options = mergeDeep(item.options, value.options ?? {})
           item.permission = Permission.merge(item.permission, Permission.fromConfig(value.permission ?? {}))
