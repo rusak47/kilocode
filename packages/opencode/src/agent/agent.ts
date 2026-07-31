@@ -60,6 +60,7 @@ export const Info = Schema.Struct({
   ),
   variant: Schema.optional(Schema.String),
   prompt: Schema.optional(Schema.String),
+  disableSoul: Schema.optional(Schema.Boolean), // kilocode_change
   options: Schema.Record(Schema.String, Schema.Unknown),
   steps: Schema.optional(Schema.Finite),
 }).annotate({ identifier: "Agent" })
@@ -361,6 +362,7 @@ const layer = Layer.effect(
           // kilocode_change start - carry metadata as typed fields, never as provider options
           item.displayName = value.displayName ?? item.displayName
           item.source = value.source ?? item.source
+          item.disableSoul = value.disableSoul ?? item.disableSoul
           // kilocode_change end
           item.options = mergeDeep(item.options, value.options ?? {})
           item.permission = Permission.merge(item.permission, Permission.fromConfig(value.permission ?? {}))
