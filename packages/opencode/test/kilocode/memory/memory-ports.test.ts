@@ -478,6 +478,8 @@ describe("memory ports", () => {
     const out2 = await again.run({ handle: resolved2.handle, system: "s", prompt: "p", timeoutMs: 30_000 })
     expect(out2.text).toBe("second")
     expect(called).toEqual(["stream", "stream"])
+  })
+
   test("model port forwards the output cap as maxTokens and omits it when unset", async () => {
     const caps: (number | undefined)[] = []
     const port = MemoryModel.port({ provider: provider({ outputs: ["{}", "{}", "{}"], caps }) })
