@@ -72,10 +72,12 @@ export const typedSchema = z
   })
   .strict()
 
-export const digestSchema = z.object({
-  topic: z.string().max(160).default(""),
-  summary: z.string().max(64_000).default(""),
-})
+export const digestSchema = z
+  .object({
+    topic: z.string().max(160).default(""),
+    summary: z.string().max(64_000).default(""),
+  })
+  .passthrough()
 
 export type CaptureSkip = z.infer<typeof typedSchema>["skipped"][number]
 export type CaptureDigest = z.infer<typeof digestSchema>
@@ -120,6 +122,39 @@ function extract(input: string) {
 function decode(input: string): unknown {
   if (Buffer.byteLength(input) > 64_000) throw new Error("memory model output exceeds 64000 bytes")
   return JSON.parse(extract(clean(input)))
+}
+
+export function hasTypedOperations(input: string): boolean {
+  if (!input.includes("operations")) return false
+  const start = input.indexOf("{")
+  if (start < 0) return false
+  const slice = input.slice(start)
+  const depth = (slice.match(/"/g)?.length ?? 0) % 2 === 0 ? slice : extract(slice)
+  const text = clean(depth)
+  if (text.startsWith("[") || text.startsWith("<")) return false
+  try {
+    const obj = JSON.parse(text)
+    if (!obj || typeof obj !== "object") return false
+    return Array.isArray(obj.operations)
+  } catch {
+    return false
+  }
+}
+
+export function hasDigestKeys(input: string): boolean {
+  const start = input.indexOf("{")
+  if (start < 0) return false
+  const slice = input.slice(start)
+  const depth = (slice.match(/"/g)?.length ?? 0) % 2 === 0 ? slice : extract(slice)
+  const text = clean(depth)
+  if (text.startsWith("[") || text.startsWith("<")) return false
+  try {
+    const obj = JSON.parse(text)
+    if (!obj || typeof obj !== "object") return false
+    return typeof obj.topic === "string" && typeof obj.summary === "string"
+  } catch {
+    return false
+  }
 }
 
 export function parseJson<T>(schema: z.ZodType<T>, input: string) {
