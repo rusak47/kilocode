@@ -11,6 +11,8 @@ import {
   fallbackDigest,
   guardReason,
   hasSubstantialDiff,
+  hasTypedOperations,
+  hasDigestKeys,
   hasUserEdit,
   mergeOps,
   notice,
@@ -292,6 +294,9 @@ export namespace MemoryCapture {
               reason: result.reason,
             }
           }
+          if (!hasDigestKeys(result.result.text)) {
+            return { topic: "", summary: safe, tokens: usage(result.result.usage), reason: "no_digest_keys" }
+          }
           const parsed = yield* Effect.try({
             try: () => parseJson(digestSchema, result.result.text),
             catch: (error) => error,
@@ -415,6 +420,16 @@ export namespace MemoryCapture {
               tokens: 0,
               fallback: true,
               reason: result.reason,
+              skipped: [] as CaptureSkip[],
+              existingKeys: inventoryKeys,
+            }
+          }
+          if (!hasTypedOperations(result.result.text)) {
+            return {
+              ops: [] as MemoryOperations.Op[],
+              tokens: usage(result.result.usage),
+              fallback: true,
+              reason: "no_typed_operations",
               skipped: [] as CaptureSkip[],
               existingKeys: inventoryKeys,
             }
