@@ -98,14 +98,16 @@ export namespace MemoryCapture {
     bypassInterval?: boolean
     memoryModel?: string
     maxOutputTokens?: number
+    timeoutMs?: number
   }) {
-    const root = input.root
+  const root = input.root
     // Acquire first (sync, cannot fail) so the matching `release` in the finalizer below always pairs
     // with this acquire regardless of where the turn exits.
     const signal = MemoryTimers.signal(root)
     const memory = yield* MemoryService.Service
     yield* memory.prepare({ root })
     const state = yield* memory.state({ root })
+    const timeoutMs = Math.max(1000, input.timeoutMs ?? state.capture.timeoutMs)
     const reported = new Set<string>()
     const fail = (reason: string, detail?: string) =>
       Effect.promise(async () => {
@@ -247,11 +249,11 @@ export namespace MemoryCapture {
                 sessionID: input.sessionID,
                 system: digestPrompt,
                 prompt: body,
-                timeoutMs: state.capture.timeoutMs,
+                timeoutMs,
                 signal,
                 maxOutputTokens: input.maxOutputTokens,
-              }),
-            catch: (error) => error,
+               }),
+             catch: (error) => error,
           }).pipe(
             Effect.map((result) => ({ ok: true as const, result })),
             Effect.catch((err: unknown) =>
@@ -371,11 +373,11 @@ export namespace MemoryCapture {
                 sessionID: input.sessionID,
                 system: typedPrompt,
                 prompt: body,
-                timeoutMs: state.capture.timeoutMs,
+                timeoutMs,
                 signal,
                 maxOutputTokens: input.maxOutputTokens,
-              }),
-            catch: (error) => error,
+               }),
+             catch: (error) => error,
           }).pipe(
             Effect.map((result) => ({ ok: true as const, result })),
             Effect.catch((err: unknown) =>

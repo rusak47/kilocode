@@ -40,6 +40,7 @@ export namespace MemoryTurn {
     provider: Provider.Interface
     memoryModel?: string
     maxOutputTokens?: number
+    timeoutMs?: number
   }) {
     const ctx = yield* InstanceState.context
     const root = MemoryPaths.root({ ctx })
@@ -51,7 +52,8 @@ export namespace MemoryTurn {
       model: MemoryModel.port({ provider: input.provider }),
       memoryModel: input.memoryModel,
       maxOutputTokens: input.maxOutputTokens,
-    })
+      timeoutMs: input.timeoutMs,
+     })
   })
 }
 
@@ -92,6 +94,7 @@ export namespace MemoryLifecycle {
             provider: input.provider,
             memoryModel: cfg.memory?.model,
             maxOutputTokens: cfg.memory?.max_output_tokens,
+            timeoutMs: cfg.memory?.timeout_ms,
           }).pipe(Effect.provideService(MemoryService.Service, input.memory), Effect.ignore)
         }).pipe(
           Effect.catchCause((cause) =>
