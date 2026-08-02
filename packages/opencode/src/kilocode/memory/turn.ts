@@ -66,6 +66,7 @@ export namespace MemoryLifecycle {
     summary: SessionSummary.Interface
     provider: Provider.Interface
     memory: MemoryService.Interface
+    config: Config.Interface
   }) {
     const bridge = yield* EffectBridge.make()
     yield* input.bus.subscribeCallback(KiloSession.Event.TurnOpen, (evt) =>
@@ -83,7 +84,7 @@ export namespace MemoryLifecycle {
           const ctx = yield* InstanceState.context
           const enabled = yield* KiloSessionPrompt.memoryToolEnabled({ ctx })
           if (!enabled) return
-          const cfg = yield* Config.Service.use((svc) => svc.get())
+          const cfg = yield* input.config.get()
           yield* MemoryTurn.close({
             sessionID: evt.properties.sessionID,
             // A superseded turn handed off to a queued follow-up after draining
