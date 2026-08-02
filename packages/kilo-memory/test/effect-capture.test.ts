@@ -80,6 +80,47 @@ function run(input: {
 }
 
 describe("MemoryCapture (fake ports)", () => {
+  test("config timeoutMs overrides the persisted capture timeout", async () => {
+    const a = await tmp()
+    const b = await tmp()
+    const seen: number[] = []
+    const rec: MemoryPorts.ModelPort = {
+      resolve: () => Effect.succeed({ handle: {} }),
+      run: async (input) => {
+        seen.push(input.timeoutMs)
+        return {
+          text:
+            input.system === digestPrompt
+              ? '{"topic":"t","summary":"s"}'
+              : '{"operations":[{"op":"upsert_environment_fact","section":"Commands","key":"k","value":"v"}],"skipped":[]}',
+          usage: USAGE,
+        }
+      },
+    }
+    const turn = (root: string, timeoutMs?: number) =>
+      Effect.runPromise(
+        MemoryCapture.turn({
+          root,
+          sessionID: "ses_effect",
+          session: session(view()),
+          model: rec,
+          timeoutMs,
+        }).pipe(Effect.provideService(MemoryService.Service, MemoryService.make())),
+      )
+    try {
+      await KiloMemory.enable({ root: a.root })
+      await KiloMemory.configure({ root: a.root, settings: { autoConsolidate: true } })
+      await KiloMemory.enable({ root: b.root })
+      await KiloMemory.configure({ root: b.root, settings: { autoConsolidate: true } })
+      await turn(a.root) // unset: persisted default (30s) applies
+      await turn(b.root, 90_000) // config: overrides persisted state
+      expect(seen).toEqual([30_000, 30_000, 90_000, 90_000])
+    } finally {
+      await a.done()
+      await b.done()
+    }
+  })
+
   test("turn-close typed LLM saves environment memory", async () => {
     const t = await tmp()
     try {
