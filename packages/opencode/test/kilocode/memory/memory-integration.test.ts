@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Stream } from "effect"
 import fs from "fs/promises"
 import path from "path"
 import { Global } from "@opencode-ai/core/global"
@@ -19,6 +19,12 @@ import type { InstanceContext } from "../../../src/project/instance-context"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { SessionID } from "../../../src/session/schema"
 import { provideTestInstance, tmpdir } from "../../fixture/fixture"
+import { Config } from "../../../src/config/config"
+import { Session } from "../../../src/session/session"
+import { SessionSummary } from "../../../src/session/summary"
+import { MemoryService } from "@kilocode/kilo-memory/effect/service"
+import { MemoryLifecycle } from "../../../src/kilocode/memory/turn"
+import { pollWithTimeout } from "../../lib/effect"
 
 function model(): Provider.Model {
   return {
@@ -629,6 +635,63 @@ describe("KiloMemory integration", () => {
       expect(after.stats.lastInjectedAt).toBe(before.stats.lastInjectedAt)
       expect(after.stats.lastInjectedTokens).toBe(before.stats.lastInjectedTokens)
       expect(after.stats.lastInjectedSessionID).toBe(before.stats.lastInjectedSessionID)
+    })
+  })
+
+  test("turn-close subscriber reads config via the captured instance, not @opencode/Config (regression)", async () => {
+    await using tmp = await tmpdir()
+    const context = ctx(tmp.path)
+    const calls: string[] = []
+    const config = {
+      get: () => {
+        calls.push("get")
+        return Effect.succeed(
+          { memory: { model: "test/mem", max_output_tokens: 64, timeout_ms: 5000 } } as Config.Info,
+        )
+      },
+    } as Config.Interface
+    let turnClose:
+      | ((event: { properties: { sessionID: string; reason: string } }) => unknown)
+      | undefined
+    const bus = Bus.Service.of({
+      publish: () => Effect.void,
+      subscribe: () => Effect.succeed(Stream.empty),
+      subscribeAll: () => Effect.succeed(Stream.empty),
+      subscribeCallback: (_def: unknown, callback: unknown) => {
+        turnClose = callback as (event: { properties: { sessionID: string; reason: string } }) => unknown
+        return Effect.sync(() => () => {})
+      },
+      subscribeAllCallback: () => Effect.sync(() => () => {}),
+    })
+    await withData(tmp.path, async () => {
+      const { root } = await KiloMemory.enable({ ctx: context })
+      await provideTestInstance({
+        directory: tmp.path,
+        fn: async () => {
+          await Effect.runPromise(
+            MemoryLifecycle.subscribe({
+              bus,
+              sessions: {} as Session.Interface,
+              summary: {} as SessionSummary.Interface,
+              provider: {} as Provider.Interface,
+              memory: MemoryService.make(),
+              config,
+            }),
+          )
+          await Effect.runPromise(
+            Effect.sync(() =>
+              turnClose?.({ properties: { sessionID: "ses_config_regression", reason: "completed" } }),
+            ),
+          )
+          await Effect.runPromise(
+            pollWithTimeout(
+              Effect.sync(() => (calls.includes("get") ? (true as const) : undefined)),
+              "config.get was never reached by the turn-close fork",
+            ),
+          )
+          expect(calls).toContain("get")
+        },
+      })
     })
   })
 })

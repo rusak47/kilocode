@@ -3,6 +3,7 @@ import { Effect, Layer, Schema, Stream } from "effect"
 import * as Log from "@opencode-ai/core/util/log"
 import { Agent } from "../../src/agent/agent"
 import { Bus } from "../../src/bus"
+import { Config } from "../../src/config/config"
 import { KiloIndexing } from "../../src/kilocode/indexing"
 import { KilocodeBootstrap } from "../../src/kilocode/bootstrap"
 import { KilocodeWatcher } from "../../src/kilocode/watcher"
@@ -489,12 +490,13 @@ describe("kilocode tool registry indexing", () => {
     const summary = Layer.succeed(SessionSummary.Service, {} as SessionSummary.Interface)
     const provider = Layer.succeed(Provider.Service, {} as Provider.Interface)
     const watcher = Layer.succeed(KilocodeWatcher.Service, KilocodeWatcher.Service.of({ init: () => Effect.void }))
+    const config = {} as Config.Interface
     const indexing = spyOn(KiloIndexing, "init").mockRejectedValue(err)
     const warn = spyOn(logger, "warn").mockImplementation(() => {})
 
     try {
       await Effect.runPromise(
-        KilocodeBootstrap.Service.use((svc) => svc.init()).pipe(
+        KilocodeBootstrap.Service.use((svc) => svc.init({ config })).pipe(
           Effect.provide(
             KilocodeBootstrap.layer.pipe(Layer.provide([sessions, bus, memory, session, summary, provider, watcher])),
           ),
