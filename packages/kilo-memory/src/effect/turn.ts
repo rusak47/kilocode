@@ -26,6 +26,7 @@ export namespace MemoryTurn {
     model: MemoryPorts.ModelPort
     memoryModel?: string
     maxOutputTokens?: number
+    timeoutMs?: number
   }
 
   function schedule(input: Input, memory: MemoryService.Interface, root: string) {
@@ -84,6 +85,7 @@ export namespace MemoryTurn {
             reason: input.reason,
             memoryModel: input.memoryModel,
             maxOutputTokens: input.maxOutputTokens,
+            timeoutMs: input.timeoutMs,
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.sync(() => {
