@@ -1,4 +1,5 @@
 import { Cause, Context, Effect, Layer } from "effect"
+import { Config } from "@/config/config"
 import { EffectBridge } from "@/effect/bridge"
 import { KiloSessions } from "@/kilo-sessions/kilo-sessions"
 import * as Log from "@opencode-ai/core/util/log"
@@ -25,7 +26,7 @@ const log = Log.create({ service: "kilocode-bootstrap" })
 
 export namespace KilocodeBootstrap {
   export interface Interface {
-    readonly init: () => Effect.Effect<void, unknown>
+    readonly init: (input: { config: Config.Interface }) => Effect.Effect<void, unknown>
   }
 
   export class Service extends Context.Service<Service, Interface>()("@kilocode/Bootstrap") {}
@@ -43,10 +44,10 @@ export namespace KilocodeBootstrap {
       const memory = yield* MemoryService.Service
       const watcher = yield* KilocodeWatcher.Service
 
-      const init = Effect.fn("KilocodeBootstrap.init")(function* () {
+      const init = Effect.fn("KilocodeBootstrap.init")(function* (input: { config: Config.Interface }) {
         yield* watcher.init()
         yield* kilo.init()
-        yield* MemoryLifecycle.subscribe({ bus, sessions, summary, provider, memory })
+        yield* MemoryLifecycle.subscribe({ bus, sessions, summary, provider, memory, config: input.config })
         // Invalidate enabled cache on every memory state mutation (properties.directory holds the memory root).
         yield* bus.subscribeCallback(MemoryEvents.Status, (evt) =>
           KiloToolRegistry.invalidateMemoryEnabled(evt.properties.directory),
