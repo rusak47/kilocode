@@ -42,7 +42,7 @@ const layer = Layer.effect(
       yield* config.get()
       // Plugin can mutate config so it has to be initialized before anything else.
       yield* plugin.init()
-      yield* kilocode.init().pipe(Effect.catchCause((cause) => Effect.logWarning("kilocode init failed", { cause }))) // kilocode_change
+      yield* kilocode.init({ config }).pipe(Effect.catchCause((cause) => Effect.logWarning("kilocode init failed", { cause }))) // kilocode_change
       // Each service self-manages its own slow work via Effect.forkScoped against
       // its per-instance state scope. We just await materialization here.
       yield* Effect.forEach(
