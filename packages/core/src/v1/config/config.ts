@@ -60,6 +60,10 @@ const MemorySchema = Schema.optional(
       description:
         "Maximum output tokens for memory consolidation model calls. Unset (default) sends no explicit cap and the provider default applies; set it to protect free-tier output limits or to bound cost.",
     }),
+    timeout_ms: Schema.optional(PositiveInt).annotate({
+      description:
+        "Per-call timeout (ms) for memory consolidation model calls. Unset (default) uses the persisted capture.timeoutMs (30000, floored at 1000); set it to override the cap when reasoning output runs long.",
+    }),
     model: Schema.optional(Schema.String).annotate({
       description:
         "Provider/model override (providerID/modelID) for memory consolidation. Unset uses the session model.",
