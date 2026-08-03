@@ -350,7 +350,7 @@ export function Prompt(props: PromptProps) {
     if (msg.agent && primary) {
       // Keep command line --agent if specified.
       if (!args.agent) local.agent.set(msg.agent)
-      if (msg.model && !primary.model && !args.agent) {
+      if (msg.model && !primary.model && !sync.data.config.model && !args.agent) {
         local.model.set(msg.model)
         local.model.variant.set(msg.model.variant)
       }
