@@ -48,7 +48,25 @@ describe("stripInternalOptions", () => {
     expect(result).toEqual({ reasoningEffort: "high" })
   })
 
+  test("strips disableSoul agent option so it never reaches the provider", () => {
+    const result = stripInternalOptions({
+      disableSoul: true,
+      id: "code",
+      displayName: "Code",
+      source: "project",
+      reasoningEffort: "high",
+    })
+    expect(result).toEqual({ reasoningEffort: "high" })
+  })
+
   test("denylist covers exactly the documented internal keys", () => {
-    expect([...INTERNAL_OPTION_KEYS]).toEqual(["id", "displayName", "source", "reference", "resolved"])
+    expect([...INTERNAL_OPTION_KEYS]).toEqual([
+      "id",
+      "displayName",
+      "source",
+      "reference",
+      "resolved",
+      "disableSoul",
+    ])
   })
 })
