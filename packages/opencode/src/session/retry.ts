@@ -94,7 +94,8 @@ export function retryable(error: Err, _provider?: string): Retryable | undefined
     if (
       lower.includes("rate increased too quickly") ||
       lower.includes("rate limit") ||
-      lower.includes("too many requests")
+      lower.includes("too many requests") ||
+      lower.includes("limit reached")
     ) {
       return { message: msg }
     }
