@@ -271,7 +271,10 @@ const discoverSkills = Effect.fnUntraced(function* (
 
     // kilocode_change start - trust follows the config source that declared the path, never the selected path.
     const origin = cfg.skill_path_origins?.[item]
-    const trusted = origin?.trusted === true && path.isAbsolute(expanded)
+    // An absolute path with no recorded origin was injected at runtime by a plugin config hook.
+    // Plugins already execute arbitrary code, so their bundled skills inherit the plugin's trust;
+    // the scan's trustedInProject guard still drops trust for any path resolving inside the project.
+    const trusted = (origin === undefined || origin.trusted === true) && path.isAbsolute(expanded)
     yield* scan(state, dir, SKILL_PATTERN, {
       trusted,
       root: trusted ? undefined : (origin?.root ?? projectRoot),
