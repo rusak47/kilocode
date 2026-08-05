@@ -60,7 +60,7 @@ export function normalizeSyncEvent(payload: unknown): SyncEvent | undefined {
 }
 // kilocode_change end
 
-export function useEvent() {
+export function useEvent(sessionID?: () => string | undefined) {
   const sdk = useSDK()
   const project = useProject() // kilocode_change
 
@@ -70,7 +70,13 @@ export function useEvent() {
         return
       }
 
-      if (event.directory !== "global" && event.project !== project.project()) return // kilocode_change
+      if (event.directory !== "global" && event.project !== project.project()) { // kilocode_change - allow current session/workspace events to bypass project mismatch while project syncs
+        const current = sessionID?.()
+        const props = (event.payload as { properties?: { sessionID?: string } }).properties
+        const sessionMatches = current && props?.sessionID === current
+        const workspaceMatches = event.workspace && project.workspace.current() && event.workspace === project.workspace.current()
+        if (!sessionMatches && !workspaceMatches) return
+      }
       handler(event.payload, { directory: event.directory, workspace: event.workspace })
     })
   }
@@ -79,7 +85,7 @@ export function useEvent() {
     return sdk.event.on("event", (event) => {
       const payload = normalizeSyncEvent(event.payload)
       if (!payload) return
-      if (event.directory === "global" || event.project === project.project()) {
+      if (event.directory === "global" || event.project === project.project() || payload.aggregateID === sessionID?.() || (event.workspace && project.workspace.current() && event.workspace === project.workspace.current())) {
         handler(payload, { directory: event.directory, workspace: event.workspace })
       }
     })
