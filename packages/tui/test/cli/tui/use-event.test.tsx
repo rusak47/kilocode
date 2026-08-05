@@ -162,4 +162,80 @@ describe("useEvent", () => {
       app.renderer.destroy()
     }
   })
+
+  // kilocode_change start - events for the currently open session should be delivered even when project.project() has not yet synced (opening an old session from a different directory)
+  test("delivers events for the current session even when project is not synced", async () => {
+    const events = createEventSource()
+    const calls = createFetch()
+    const seen: Event[] = []
+    let project!: ReturnType<typeof useProject>
+    let done!: () => void
+    const ready = new Promise<void>((resolve) => {
+      done = resolve
+    })
+
+    const app = await testRender(() => (
+      <TestTuiContexts>
+        <SDKProvider url="http://test" directory={directory} events={events.source} fetch={calls.fetch}>
+          <ProjectProvider>
+            <ProbeWithSessionID
+              sessionID="sess_abc"
+              onReady={async (ctx) => {
+                project = ctx.project
+                done()
+              }}
+              seen={seen}
+            />
+          </ProjectProvider>
+        </SDKProvider>
+      </TestTuiContexts>
+    ))
+
+    await ready
+
+    try {
+      project.workspace.set(undefined)
+      delete (project.data.project as { id: string | undefined }).id
+
+      events.emit(
+        event(
+          {
+            id: `evt_session_${"abc"}`,
+            type: "session.status",
+            properties: { sessionID: "sess_abc", status: { type: "idle" as const } },
+          },
+          { directory: "/tmp/other", project: "proj_foreign", workspace: "ws_b" },
+        ),
+      )
+
+      await wait(() => seen.length === 1)
+
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).toMatchObject({
+        type: "session.status",
+        properties: { sessionID: "sess_abc", status: { type: "idle" } },
+      })
+    } finally {
+      app.renderer.destroy()
+    }
+  })
+  // kilocode_change end
 })
+
+function ProbeWithSessionID(props: {
+  sessionID: string
+  seen: Event[]
+  onReady: (ctx: { project: ReturnType<typeof useProject> }) => void
+}) {
+  const project = useProject()
+  const event = useEvent(() => props.sessionID)
+
+  onMount(() => {
+    event.subscribe((evt) => {
+      props.seen.push(evt)
+    })
+    props.onReady({ project })
+  })
+
+  return <box />
+}

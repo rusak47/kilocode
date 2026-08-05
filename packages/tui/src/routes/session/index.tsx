@@ -207,7 +207,7 @@ export function Session() {
   const route = useRouteData("session")
   const { navigate } = useRoute()
   const sync = useSync()
-  const event = useEvent()
+  const event = useEvent(() => route.sessionID)
   const project = useProject()
   const paths = useTuiPaths()
   const tuiConfig = useTuiConfig()
