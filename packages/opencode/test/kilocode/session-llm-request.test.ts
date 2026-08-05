@@ -45,13 +45,14 @@ const plugin: Plugin.Interface = {
   list: () => Effect.succeed([]),
 }
 
-function agent(name: string): Agent.Info {
+function agent(name: string, opts: Partial<Agent.Info> = {}): Agent.Info {
   return {
     name,
     mode: "primary",
     options: {},
     permission: [],
     prompt: `${name} generation prompt`,
+    ...opts,
   }
 }
 
@@ -67,7 +68,7 @@ function user(name: string): SessionV1.User {
   }
 }
 
-async function prepare(name: string, oauth = false) {
+async function prepare(name: string, oauth = false, agentOpts: Partial<Agent.Info> = {}) {
   const auth: Auth.Info | undefined = oauth
     ? { type: "oauth", refresh: "refresh", access: "access", expires: Date.now() + 60_000 }
     : undefined
@@ -87,7 +88,7 @@ async function prepare(name: string, oauth = false) {
       user: user(name),
       sessionID: "ses_test",
       model,
-      agent: agent(name),
+      agent: agent(name, agentOpts),
       system: [],
       messages: [{ role: "user", content: "Generate a name" }] satisfies ModelMessage[],
       tools: {},
@@ -123,5 +124,11 @@ describe("Kilo persona in generated metadata requests", () => {
 
     expect(result.system[0]).toContain(SystemPrompt.soul())
     expect(oauth.params.options.instructions).toContain(SystemPrompt.soul())
+  })
+
+  test("omits the persona when disableSoul is true", async () => {
+    const result = await prepare("code", false, { disableSoul: true })
+
+    expect(result.system[0]).not.toContain(SystemPrompt.soul())
   })
 })
