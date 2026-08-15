@@ -24,7 +24,7 @@ import { heredocs } from "@/kilocode/tool/shell-heredoc" // kilocode_change
 import { unparsed } from "@/kilocode/tool/shell-unparsed" // kilocode_change
 import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
-import { ShellPrompt, type Parameters } from "./shell/prompt"
+import { ShellPrompt, descriptions, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
 import { mutates as mutatesGit } from "@/kilocode/sandbox/git" // kilocode_change
 import * as SandboxPolicy from "@/kilocode/sandbox/policy" // kilocode_change
@@ -729,7 +729,9 @@ export const ShellTool = Tool.define(
         const shell = Shell.acceptable(cfg.shell)
         const name = Shell.name(shell)
         const limits = yield* trunc.limits()
-        const prompt = ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs)
+        const prompt = (cfg.tool_prompt?.shell)
+          ? ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs, cfg.tool_prompt.shell)
+          : ShellPrompt.render(name, process.platform, limits, defaultTimeoutMs)
         yield* Effect.logInfo("shell tool using shell", { shell })
 
         return {
