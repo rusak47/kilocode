@@ -1178,6 +1178,39 @@ describe("tool.shell truncation", () => {
     ),
   )
 
+  it.live("uses custom prompt when tool_prompt.shell is set", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped({
+        config: { tool_prompt: { shell: "Custom prompt text for bash tool." } },
+      })
+      yield* runIn(
+        tmp,
+        Effect.gen(function* () {
+          const tool = yield* initShell()
+          expect(tool.description).toBe("Custom prompt text for bash tool.")
+        }),
+      )
+    }),
+  )
+
+  it.live("renders template vars in custom tool_prompt.shell", () =>
+    Effect.gen(function* () {
+      const tmp = yield* tmpdirScoped({
+        config: { tool_prompt: { shell: "Shell: ${shell}, OS: ${os}, tmp: ${tmp}" } },
+      })
+      yield* runIn(
+        tmp,
+        Effect.gen(function* () {
+          const tool = yield* initShell()
+          expect(tool.description).toContain("OS: ")
+          expect(tool.description).toContain(", tmp: ")
+          expect(tool.description).not.toContain("${shell}")
+          expect(tool.description).not.toContain("${os}")
+        }),
+      )
+    }),
+  )
+
   it.live("full output is saved to file when truncated", () =>
     runIn(
       projectRoot,
