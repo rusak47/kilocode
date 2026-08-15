@@ -261,6 +261,12 @@ export const Info = Schema.Struct({
     Schema.Struct({ url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }) }),
   ),
   commit_message: CommitMessageSchema, // kilocode_change
+  // kilocode_change start - tool prompt overrides
+  tool_prompt: Schema.optional(Schema.Record(Schema.String, Schema.String)).annotate({
+    description:
+      "Override built-in tool prompts by tool name. Each key is a tool ID (e.g. 'bash') and each value is the custom prompt text that replaces the default. When set, the custom prompt is used verbatim.",
+  }),
+  // kilocode_change end
   // kilocode_change start - memory consolidation configuration
   memory: MemorySchema,
   // kilocode_change end

@@ -8,7 +8,7 @@ const PS = new Set(["powershell", "pwsh"])
 const CMD = new Set(["cmd"])
 
 // kilocode_change start - description is optional, prefixed with "Recommended:" so the model knows it can omit it
-const descriptions = {
+export const descriptions = {
   bash: "Recommended: a clear, concise description of what this command does in 5-10 words. Examples:\nInput: ls\nOutput: Lists files in current directory\n\nInput: git status\nOutput: Shows working tree status\n\nInput: npm install\nOutput: Installs package dependencies\n\nInput: mkdir foo\nOutput: Creates directory 'foo'",
   powershell:
     'Recommended: a clear, concise description of what this command does in 5-10 words. Examples:\nInput: Get-ChildItem -LiteralPath "."\nOutput: Lists current directory\n\nInput: git status\nOutput: Shows working tree status\n\nInput: npm install\nOutput: Installs package dependencies\n\nInput: New-Item -ItemType Directory -Path "tmp"\nOutput: Creates directory tmp',
@@ -289,10 +289,16 @@ function profile(name: string, platform: NodeJS.Platform, limits: Limits, defaul
   }
 }
 
-export function render(name: string, platform: NodeJS.Platform, limits: Limits, defaultTimeoutMs: number) {
+export function render(
+  name: string,
+  platform: NodeJS.Platform,
+  limits: Limits,
+  defaultTimeoutMs: number,
+  template?: string, // kilocode_change - optional custom prompt template
+) {
   const selected = profile(name, platform, limits, defaultTimeoutMs)
   return {
-    description: renderPrompt(DESCRIPTION, {
+    description: renderPrompt(template ?? DESCRIPTION, {
       intro: selected.intro,
       os: platform,
       shell: name,
