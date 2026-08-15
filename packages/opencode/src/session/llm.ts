@@ -350,6 +350,17 @@ const live: Layer.Layer<
         "llm.provider": input.model.providerID,
         "llm.model": input.model.id,
       })
+
+      // kilocode_change start - filter empty tool.name calls to avoid some provider model errors
+      const filteredMessages = prepared.messages.map((msg) => {
+        if (typeof msg.content === "string" || !Array.isArray(msg.content)) return msg
+        const content = msg.content.filter(
+          (part) => !(part.type === "tool-call" && typeof part.toolName === "string" && part.toolName.length === 0),
+        )
+        return content.length === msg.content.length ? msg : { ...msg, content } as ModelMessage
+      }) as ModelMessage[]
+      // kilocode_change end - filter empty tool.name calls to avoid some provider model errors
+      
       // Default runtime path: AI SDK owns provider execution and tool dispatch;
       // LLMAISDK.toLLMEvents below normalizes fullStream parts for the processor.
       const result = streamText({
@@ -396,7 +407,7 @@ const live: Layer.Layer<
         headers: prepared.headers,
         maxRetries: input.retries ?? 0,
         allowSystemInMessages: true, // kilocode_change - system prompts are trusted and intentionally included in messages
-        messages: prepared.messages,
+        messages: filteredMessages,
         model: wrapLanguageModel({
           model: language,
           middleware: [

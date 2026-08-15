@@ -99,6 +99,7 @@ export function convertToOpenAICompatibleChatMessages(prompt: LanguageModelV3Pro
               break
             }
             case "tool-call": {
+              if (!part.toolName) break // kilocode_change - drop tool calls with empty name (provider serialization bug)
               toolCalls.push({
                 id: part.toolCallId,
                 type: "function",
