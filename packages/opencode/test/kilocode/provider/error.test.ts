@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { APICallError } from "ai"
 import { MessageV2 } from "@/session/message-v2"
 import { ProviderV2 } from "@opencode-ai/core/provider"
+import { SessionRetry } from "@/session/retry"
 
 const googleAuthError =
   "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project."
@@ -277,5 +278,41 @@ describe("Google Gemini authentication errors", () => {
     expect(MessageV2.APIError.isInstance(result)).toBe(true)
     if (!MessageV2.APIError.isInstance(result)) throw new Error("expected APIError")
     expect(result.data.message).toBe(error.message)
+  })
+})
+
+describe("plain provider failure strings", () => {
+  const providerID = ProviderV2.ID.make("kilo")
+
+  test.each([
+    "Internal error while making inference request",
+    "Upstream error from Nvidia: Internal server error",
+    "ResourceExhausted: Worker local total request limit reached (54/32)",
+    "Upstream error from Nvidia: Service temporarily overloaded",
+    "Service temporarily unavailable",
+  ])("promotes %s to retryable APIError", (message) => {
+    const result = MessageV2.fromError(message, { providerID })
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    if (!MessageV2.APIError.isInstance(result)) throw new Error("expected APIError")
+    expect(result.data.message).toBe(message)
+    expect(result.data.isRetryable).toBe(true)
+    expect(SessionRetry.retryable(result, "kilo")).toEqual({ message })
+  })
+
+  test("promotes matching Error messages without wrapping as UnknownError", () => {
+    const message = "Upstream error from Nvidia: Internal server error"
+    const result = MessageV2.fromError(new Error(message), { providerID })
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    if (!MessageV2.APIError.isInstance(result)) throw new Error("expected APIError")
+    expect(result.data.message).toBe(message)
+    expect(result.data.isRetryable).toBe(true)
+  })
+
+  test("keeps unrelated strings as UnknownError without JSON quotes", () => {
+    const result = MessageV2.fromError("not a provider failure", { providerID })
+    expect(result).toStrictEqual({
+      name: "UnknownError",
+      data: { message: "not a provider failure" },
+    })
   })
 })
