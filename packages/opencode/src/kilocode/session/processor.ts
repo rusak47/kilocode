@@ -39,6 +39,7 @@ export namespace KiloSessionProcessor {
     reasoning: boolean
     tool: boolean
     usage: boolean
+    outputTokens: boolean
     finished: boolean
     finish?: string
   }
@@ -254,8 +255,13 @@ export namespace KiloSessionProcessor {
     ].some((value) => value !== undefined && value !== 0)
   }
 
+  export function hasOutputTokens(usage: Usage | undefined) {
+    if (!usage) return false
+    return usage.outputTokens !== undefined && usage.outputTokens !== 0
+  }
+
   export function attempt(): Attempt {
-    return { text: false, reasoning: false, tool: false, usage: false, finished: false }
+    return { text: false, reasoning: false, tool: false, usage: false, outputTokens: false, finished: false }
   }
 
   /**
@@ -321,10 +327,12 @@ export namespace KiloSessionProcessor {
       attempt.finished = true
       attempt.finish = event.reason
       attempt.usage ||= hasUsage(event.usage)
+      attempt.outputTokens ||= hasOutputTokens(event.usage)
     }
     if (event.type === "finish" && !attempt.finished) {
       attempt.finish = event.reason
       attempt.usage ||= hasUsage(event.usage)
+      attempt.outputTokens ||= hasOutputTokens(event.usage)
     }
   }
 
@@ -334,6 +342,7 @@ export namespace KiloSessionProcessor {
     reasoning: boolean
     tool: boolean
     usage: boolean
+    outputTokens: boolean
   }) {
     if (input.finish !== undefined && input.finish !== "unknown") return false
     if (input.text || input.tool) return false
@@ -342,7 +351,7 @@ export namespace KiloSessionProcessor {
     // Keeping this decision here avoids the unbounded loop caused by continuing
     // every unknown finish at the prompt-loop boundary.
     if (input.reasoning) return true
-    return !input.usage
+    return !input.outputTokens
   }
 
   export function blockRetry(error: ReturnType<typeof MessageV2.fromError>) {
