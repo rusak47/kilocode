@@ -274,7 +274,7 @@ export namespace MemoryCapture {
             Effect.catch(() =>
               Effect.gen(function* () {
                 yield* fail("digest parse_error")
-                return undefined
+          return undefined
               }),
             ),
           )
@@ -395,7 +395,7 @@ export namespace MemoryCapture {
             Effect.catch(() =>
               Effect.gen(function* () {
                 yield* fail("consolidate parse_error")
-                return undefined
+          return undefined
               }),
             ),
           )
