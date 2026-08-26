@@ -362,7 +362,6 @@ const layer = Layer.effect(
           // kilocode_change start - carry metadata as typed fields, never as provider options
           item.displayName = value.displayName ?? item.displayName
           item.source = value.source ?? item.source
-          item.requirements = value.requirements ?? item.requirements
           item.disableSoul = value.disableSoul ?? item.disableSoul
           // kilocode_change end
           item.options = mergeDeep(item.options, value.options ?? {})
