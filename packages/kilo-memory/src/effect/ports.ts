@@ -43,6 +43,7 @@ export namespace MemoryPorts {
       prompt: string
       timeoutMs: number
       signal?: AbortSignal
+      maxOutputTokens?: number
     }) => Promise<{ text: string; usage: unknown }>
   }
 }
