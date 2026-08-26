@@ -97,6 +97,7 @@ export namespace MemoryCapture {
     reason?: CaptureReason
     bypassInterval?: boolean
     memoryModel?: string
+    maxOutputTokens?: number
   }) {
     const root = input.root
     // Acquire first (sync, cannot fail) so the matching `release` in the finalizer below always pairs
@@ -248,6 +249,7 @@ export namespace MemoryCapture {
                 prompt: body,
                 timeoutMs: state.capture.timeoutMs,
                 signal,
+                maxOutputTokens: input.maxOutputTokens,
               }),
             catch: (error) => error,
           }).pipe(
@@ -371,6 +373,7 @@ export namespace MemoryCapture {
                 prompt: body,
                 timeoutMs: state.capture.timeoutMs,
                 signal,
+                maxOutputTokens: input.maxOutputTokens,
               }),
             catch: (error) => error,
           }).pipe(

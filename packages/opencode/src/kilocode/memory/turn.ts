@@ -7,6 +7,7 @@ import * as Log from "@opencode-ai/core/util/log"
 import type { Bus } from "@/bus"
 import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
+import { Config } from "@/config/config"
 import type { Provider } from "@/provider/provider"
 import type { Session } from "@/session/session"
 import type { SessionID } from "@/session/schema"
@@ -37,6 +38,8 @@ export namespace MemoryTurn {
     sessions: Session.Interface
     summary: SessionSummary.Interface
     provider: Provider.Interface
+    memoryModel?: string
+    maxOutputTokens?: number
   }) {
     const ctx = yield* InstanceState.context
     const root = MemoryPaths.root({ ctx })
@@ -46,6 +49,8 @@ export namespace MemoryTurn {
       reason: input.reason,
       session: MemorySession.port({ sessions: input.sessions, summary: input.summary }),
       model: MemoryModel.port({ provider: input.provider }),
+      memoryModel: input.memoryModel,
+      maxOutputTokens: input.maxOutputTokens,
     })
   })
 }
@@ -76,6 +81,7 @@ export namespace MemoryLifecycle {
           const ctx = yield* InstanceState.context
           const enabled = yield* KiloSessionPrompt.memoryToolEnabled({ ctx })
           if (!enabled) return
+          const cfg = yield* Config.Service.use((svc) => svc.get())
           yield* MemoryTurn.close({
             sessionID: evt.properties.sessionID,
             // A superseded turn handed off to a queued follow-up after draining
@@ -84,6 +90,8 @@ export namespace MemoryLifecycle {
             sessions: input.sessions,
             summary: input.summary,
             provider: input.provider,
+            memoryModel: cfg.memory?.model,
+            maxOutputTokens: cfg.memory?.max_output_tokens,
           }).pipe(Effect.provideService(MemoryService.Service, input.memory), Effect.ignore)
         }).pipe(
           Effect.catchCause((cause) =>
