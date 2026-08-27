@@ -637,12 +637,23 @@ describe("Agent Manager Provider — onMessage routing", () => {
    * Regression: deletion must clean up both disk (manager) and state, then
    * push to webview. Missing any step leaves ghost worktrees or stale UI.
    */
-  it("onDeleteWorktree removes from disk, state, clears orphans, and pushes", () => {
+  it("does not restore running indicators after a session is deleted", () => {
+    const lifecycle = body("onSessionLifecycle")
+    const status = body("onSessionStatus")
+
+    expect(lifecycle).toContain("this.removedSessions.add(id)")
+    expect(lifecycle).toContain("this.busySessions.delete(id)")
+    expect(lifecycle).toContain("info && !this.removedSessions.has(info.id) ? info.directory : undefined")
+    expect(status).toContain("this.removedSessions.has(sid)")
+  })
+
+  it("limits snapshot cleanup to explicit worktree deletion without deleting sessions", () => {
     const text = body("onDeleteWorktree")
-    expect(text).toContain("worktreeManager().removeWorktree")
-    expect(text).toContain("state.removeWorktree")
-    expect(text).toContain("sessions.clearDirectory")
-    expect(text).toContain("host.push()")
+    expect(text).toContain(".kilocode.removeSnapshot")
+    expect(text).not.toContain("session.delete")
+    for (const name of ["onCreateWorktree", "onCreateMultiVersion", "onRemoveStaleWorktree"]) {
+      expect(body(name)).not.toContain("removeSnapshot")
+    }
   })
 
   // -- onCreateWorktree invariants -------------------------------------------
@@ -1152,5 +1163,16 @@ describe("Shared webview provider shell", () => {
       "AgentManagerContent",
     ])
     expect(fs.readFileSync(PROVIDER_SHELL_FILE, "utf-8")).not.toContain("WorktreeModeProvider")
+  })
+})
+
+describe("Agent Manager worktree setup", () => {
+  it("dismisses successful setup overlays immediately and retains the error delay", () => {
+    const source = fs.readFileSync(AGENT_MANAGER_APP_FILE, "utf-8")
+    expect(source).toContain('globalThis.setTimeout(() => setSetup({ active: false, message: "" }), error ? 3000 : 0)')
+    expect(source).not.toContain(
+      'globalThis.setTimeout(() => setSetup({ active: false, message: "" }), error ? 3000 : 500)',
+    )
+    expect(source).toContain("globalThis.setTimeout")
   })
 })
