@@ -53,7 +53,7 @@ const RETRYABLE = /rate.?limit|too.?many.?requests|rate increased too quickly|ex
 // Keep free-form message matching narrow: Session.retryable only applied
 // rate-limit phrases to prose; the wider pattern above is for structured
 // code/type fields only
-const RETRYABLE_TEXT = /rate increased too quickly|rate.?limit|too.?many.?requests/i
+const RETRYABLE_TEXT = /rate increased too quickly|rate.?limit|too.?many.?requests|limit reached|internal server error|internal error|resourceexhausted|overloaded|temporarily unavailable/i
 
 // Must stay at least as permissive as the Session.retryable heuristics that
 // applied when these frames still surfaced as NamedError.Unknown, or
@@ -92,4 +92,17 @@ export function hint(provider: ProviderV2.ID, error: APICallError) {
   if (error.message !== AUTH_ERROR) return
 
   return "Google Gemini rejected this API key. Check its type and status in Google AI Studio. Replace a Standard key with a new auth key; if it is already an auth key, check its Gemini API access or create a replacement. Restricted Standard keys work only until September 2026. See https://kilo.ai/docs/ai-providers/gemini."
+}
+
+/**
+ * Promote bare provider failure strings (AI SDK / gateway often throw these
+ * instead of APICallError) into retryable APIError material when the prose
+ * matches known transient failures. Returns undefined for unrelated text so
+ * callers can keep UnknownError behavior.
+ */
+export function plain(message: string) {
+  const text = message.trim()
+  if (!text) return
+  if (!RETRYABLE_TEXT.test(text)) return
+  return { message: text, isRetryable: true as const }
 }

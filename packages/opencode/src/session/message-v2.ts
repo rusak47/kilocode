@@ -40,6 +40,7 @@ import { SessionNetwork } from "./network" // kilocode_change
 import { CodexAuthExpiredError } from "@/kilocode/provider/codex-refresh" // kilocode_change
 import { KiloSessionMessageOrder } from "@/kilocode/session/message-order" // kilocode_change
 import * as TextStream from "@/kilocode/text-stream" // kilocode_change
+import * as KiloProviderError from "@/kilocode/provider/error" // kilocode_change
 import { Effect, Schema } from "effect"
 
 /** Error shape thrown by Bun's fetch() when gzip/br decompression fails mid-stream */
@@ -839,8 +840,26 @@ export function fromError(
         { cause: e },
       ).toObject()
     case e instanceof Error:
-      return new NamedError.Unknown({ message: errorMessage(e) }, { cause: e }).toObject()
+      // kilocode_change start - promote transient provider prose (Nvidia/gateway) to retryable APIError
+      {
+        const text = errorMessage(e)
+        const retry = KiloProviderError.plain(text)
+        if (retry) {
+          return new APIError({ message: retry.message, isRetryable: retry.isRetryable }, { cause: e }).toObject()
+        }
+        return new NamedError.Unknown({ message: text }, { cause: e }).toObject()
+      }
+      // kilocode_change end
     default:
+      // kilocode_change start - AI SDK may fail with a bare string; avoid JSON.stringify UnknownError
+      if (typeof e === "string") {
+        const retry = KiloProviderError.plain(e)
+        if (retry) {
+          return new APIError({ message: retry.message, isRetryable: retry.isRetryable }, { cause: e }).toObject()
+        }
+        return new NamedError.Unknown({ message: e }, { cause: e }).toObject()
+      }
+      // kilocode_change end
       try {
         const parsed = ProviderError.parseStreamError(e)
         if (parsed) {
