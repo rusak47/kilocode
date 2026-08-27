@@ -593,6 +593,7 @@ const layer = Layer.effect(
                 reasoning: attempt.reasoning,
                 tool: attempt.tool,
                 usage: attempt.usage,
+                outputTokens: attempt.outputTokens,
               })
             )
               return yield* Effect.fail(
@@ -1014,14 +1015,17 @@ const layer = Layer.effect(
                 attempt = KiloSessionProcessor.attempt()
                 yield* request()
               }),
-              replayable: () =>
-                KiloSessionProcessor.replayable({
-                  finish: attempt.finish,
-                  text: attempt.text,
-                  reasoning: attempt.reasoning,
-                  tool: attempt.tool,
-                  usage: attempt.usage,
-                }),
+          replayable: () =>
+            // kilocode_change start - track outputTokens so prompt-only empty streams retry
+            KiloSessionProcessor.replayable({
+              finish: attempt.finish,
+              text: attempt.text,
+              reasoning: attempt.reasoning,
+              tool: attempt.tool,
+              usage: attempt.usage,
+              outputTokens: attempt.outputTokens,
+            }),
+            // kilocode_change end
               discard: () => discard(baseline),
               set: setRetry,
             })
