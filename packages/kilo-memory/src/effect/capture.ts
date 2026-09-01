@@ -1,6 +1,5 @@
 import { Cause, Effect } from "effect"
 import {
-  auditOps,
   cap,
   capturePlan,
   digestPrompt,
@@ -20,9 +19,9 @@ import {
   parseJson,
   parseOps,
   salvageTyped,
-  skipped,
   summarize,
   summarizeDiffs,
+  TRANSIENT,
   typedPrompt,
   usage,
   verifySkips,
@@ -107,11 +106,16 @@ export namespace MemoryCapture {
     yield* memory.prepare({ root })
     const state = yield* memory.state({ root })
     const reported = new Set<string>()
-    const fail = (reason: string) =>
+    const fail = (reason: string, detail?: string) =>
       Effect.promise(async () => {
         const safe = MemoryRedact.text(reason)
         if (reported.has(safe)) return
         reported.add(safe)
+        if (reason === TRANSIENT)
+          MemoryLog.warn("memory capture transient failure", {
+            reason: safe,
+            detail: MemoryShared.brief(MemoryRedact.text(detail ?? safe), 160),
+          })
         await MemoryEvents.publish({
           event: "error",
           payload: MemoryEvents.status({
@@ -125,7 +129,6 @@ export namespace MemoryCapture {
       })
     const skip = (reason: string, opts?: { idleFlush?: boolean }) =>
       Effect.gen(function* () {
-        if (state.enabled) yield* memory.decide({ root, decision: skipped({ sessionID: input.sessionID, reason }) })
         yield* Effect.promise(() =>
           MemoryEvents.publish({
             event: "status",
@@ -205,23 +208,6 @@ export namespace MemoryCapture {
           tokens: 0,
           fallback: true,
         })
-        yield* memory.decide({
-          root,
-          decision: {
-            kind: "digest",
-            trigger: "turn-close",
-            sessionID: input.sessionID,
-            result: "fallback",
-            llm: false,
-            parsed: false,
-            fallback: true,
-            reason: input.reason,
-            tokens: 0,
-            operationCount: 1,
-            skippedCount: 0,
-            summary: `session digest fallback on ${input.reason ?? "close"}`,
-          },
-        })
       }
       return yield* skip(plan.skipReason, plan.idleFlush ? { idleFlush: true } : undefined)
     }
@@ -234,22 +220,12 @@ export namespace MemoryCapture {
 
     const model =
       digestDue || typedCall
-        ? yield* Effect.gen(function* () {
-            const resolution = yield* input.model.resolve({
+        ? (
+            yield* input.model.resolve({
               configured: input.memoryModel,
               session: view.sessionModel,
             })
-            if (resolution.fallback) {
-              yield* memory.append({
-                root,
-                text: `memory_model_config reason=${MemoryShared.brief(
-                  MemoryRedact.text(resolution.fallback.reason),
-                  160,
-                )} fallback=1`,
-              })
-            }
-            return resolution.handle
-          })
+          ).handle
         : undefined
     const digestEffect = digestDue
       ? Effect.gen(function* () {
@@ -279,9 +255,8 @@ export namespace MemoryCapture {
               Effect.gen(function* () {
                 if (signal.aborted) return { ok: false as const, reason: "cancelled" }
                 const raw = errorReason(err)
-                const reason = MemoryRedact.text(guardReason(raw) ?? raw)
-                yield* fail(reason)
-                yield* memory.append({ root, text: `digest error=${MemoryShared.brief(reason, 160)} fallback=1` })
+                const reason = MemoryRedact.text(guardReason(err) ?? raw)
+                yield* fail(reason, raw)
                 return { ok: false as const, reason }
               }),
             ),
@@ -301,14 +276,9 @@ export namespace MemoryCapture {
             try: () => parseJson(digestSchema, result.result.text),
             catch: (error) => error,
           }).pipe(
-            Effect.catch((err: unknown) =>
+            Effect.catch(() =>
               Effect.gen(function* () {
-                const reason = MemoryRedact.text(errorReason(err))
                 yield* fail("digest parse_error")
-                yield* memory.append({
-                  root,
-                  text: `digest parse_error=${MemoryShared.brief(reason, 160)} fallback=1`,
-                })
                 return undefined
               }),
             ),
@@ -407,9 +377,8 @@ export namespace MemoryCapture {
               Effect.gen(function* () {
                 if (signal.aborted) return { ok: false as const, reason: "cancelled" }
                 const raw = errorReason(err)
-                const reason = MemoryRedact.text(guardReason(raw) ?? raw)
-                yield* fail(reason)
-                yield* memory.append({ root, text: `consolidate error=${MemoryShared.brief(reason, 160)}` })
+                const reason = MemoryRedact.text(guardReason(err) ?? raw)
+                yield* fail(reason, raw)
                 return { ok: false as const, reason }
               }),
             ),
@@ -438,11 +407,9 @@ export namespace MemoryCapture {
             try: () => salvageTyped(result.result.text),
             catch: (error) => error,
           }).pipe(
-            Effect.catch((err: unknown) =>
+            Effect.catch(() =>
               Effect.gen(function* () {
-                const reason = MemoryRedact.text(errorReason(err))
                 yield* fail("consolidate parse_error")
-                yield* memory.append({ root, text: `consolidate parse_error=${MemoryShared.brief(reason, 160)}` })
                 return undefined
               }),
             ),
@@ -490,30 +457,6 @@ export namespace MemoryCapture {
         fallback: Boolean(digest.reason),
       })
     }
-    if (digestDue) {
-      yield* memory.decide({
-        root,
-        decision: {
-          kind: "digest",
-          trigger: "turn-close",
-          sessionID: input.sessionID,
-          result: digest.reason ? "fallback" : digest.summary ? "saved" : "skipped",
-          llm: true,
-          parsed: Boolean(digest.summary && !digest.reason),
-          fallback: Boolean(digest.reason),
-          reason: digest.reason,
-          tokens: digest.tokens,
-          operationCount: digest.summary ? 1 : 0,
-          skippedCount: digest.summary ? 0 : 1,
-          summary: digest.reason
-            ? `session digest used fallback after ${digest.reason}`
-            : digest.summary
-              ? "session digest saved"
-              : "session digest skipped",
-        },
-      })
-    }
-
     // Apply adds only: a same-key add supersedes/updates an existing fact in place. reconcile also
     // surfaces exact-key auto-removes, but V0 keeps hard removes explicit-only — auto-capture never
     // deletes memory it merely paraphrased (or wrongly flags), so reconciled.removes is not applied.
@@ -521,39 +464,11 @@ export namespace MemoryCapture {
     const ops = reconciled.ops.slice(0, state.capture.maxOpsPerRun)
     const project =
       ops.length > 0 ? yield* memory.apply({ root, ops, trigger: "turn-close", tokens: generated.tokens }) : undefined
-    // Apply-time skips (content gate + secret, both redacted at creation) surface in the typed audit
-    // record alongside the model's own declared skips.
     const applied: CaptureSkip[] = [...generated.skipped, ...(project?.skipped ?? [])]
     const count = project?.operationCount ?? 0
-    if (typedCall) {
-      yield* memory.decide({
-        root,
-        decision: {
-          kind: "typed",
-          trigger: "turn-close",
-          sessionID: input.sessionID,
-          result: generated.fallback ? "fallback" : count > 0 ? "saved" : "skipped",
-          llm: true,
-          parsed: !generated.fallback,
-          fallback: generated.fallback,
-          reason: generated.reason,
-          tokens: generated.tokens,
-          operationCount: count,
-          skippedCount: applied.length,
-          skipped: applied,
-          operations: auditOps(ops),
-          files: [...new Set(ops.flatMap((item) => (item.action === "add" && item.file ? [item.file] : [])))],
-          summary: generated.fallback
-            ? `typed consolidation skipped after ${generated.reason ?? "model failure"}`
-            : count > 0
-              ? `typed consolidation saved ${count} ops`
-              : `typed consolidation skipped ${applied.length} candidates`,
-        },
-      })
-    }
     const tokens = digest.tokens + generated.tokens
     if (!digest.summary && !typedCall && count === 0) return yield* skip("no_ops")
-    if ((digestDue || typedCall || count > 0) && (!typedCall || !generated.fallback)) {
+    if (digestDue || typedCall || count > 0) {
       yield* memory.commit({
         root,
         now,
@@ -561,8 +476,7 @@ export namespace MemoryCapture {
         tokens,
         count,
         digest: Boolean(digest.summary),
-        typed: typedCall,
-        skipped: applied,
+        typed: typedCall && !generated.fallback,
       })
     }
     const updated = yield* memory.state({ root })
