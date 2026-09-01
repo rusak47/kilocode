@@ -3,6 +3,7 @@ import type { BuiltinTuiPlugin } from "../builtins"
 import { createMemo, Show } from "solid-js"
 import { abbreviateHome } from "../../runtime"
 import { useTuiPaths } from "../../context/runtime"
+import { SidebarSection, skipSidebar } from "./section"
 
 const id = "internal:sidebar-footer"
 
@@ -84,7 +85,12 @@ const tui: TuiPlugin = async (api) => {
     order: 100,
     slots: {
       sidebar_footer(_ctx, props) {
-        return <View api={api} sessionID={props.session_id} />
+        if (skipSidebar("plugin_footer")) return null
+        return (
+          <SidebarSection name="footer">
+            <View api={api} sessionID={props.session_id} />
+          </SidebarSection>
+        )
       },
     },
   })

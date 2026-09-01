@@ -9,6 +9,9 @@ const tui: TuiPlugin = async (api) => {
     order: 1000,
     slots: {
       sidebar_content(_ctx, props) {
+        if (process.env.KILO_DEBUG_SKIP_SIDEBAR === "1" || process.env.KILO_DEBUG_SKIP_SIDEBAR_MEMORY === "1") {
+          return null
+        }
         return <MemorySidebar api={api} sessionID={props.session_id} />
       },
     },

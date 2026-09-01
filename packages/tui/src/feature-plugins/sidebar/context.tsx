@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@kilocode/sdk/v2"
 import type { TuiPlugin, TuiPluginApi } from "@kilocode/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
 import { createMemo, createSignal, Show } from "solid-js" // kilocode_change
+import { SidebarSection, skipSidebar } from "./section"
 
 const id = "internal:sidebar-context"
 
@@ -44,6 +45,17 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
       percent: model?.limit.context ? Math.round((tokens / model.limit.context) * 100) : null,
     }
   })
+  console.debug("[TUI sidebar context]", {
+    sessionID: props.session_id,
+    messageCount: msg().length,
+    session: session()
+      ? {
+          cost: session()!.cost,
+          directory: session()!.directory,
+        }
+      : null,
+    state: state(),
+  })
 
   return (
     <box>
@@ -75,7 +87,12 @@ const tui: TuiPlugin = async (api) => {
     order: 100,
     slots: {
       sidebar_content(_ctx, props) {
-        return <View api={api} session_id={props.session_id} />
+        if (skipSidebar("context")) return null
+        return (
+          <SidebarSection name="context">
+            <View api={api} session_id={props.session_id} />
+          </SidebarSection>
+        )
       },
     },
   })

@@ -7,6 +7,13 @@ export interface TodoItemProps {
 
 export function TodoItem(props: TodoItemProps) {
   const { theme } = useTheme()
+  console.debug("[TUI todo item render]", {
+    status: props.status,
+    statusType: typeof props.status,
+    content: props.content,
+    contentType: typeof props.content,
+    contentLength: typeof props.content === "string" ? props.content.length : null,
+  })
 
   return (
     <box flexDirection="row" gap={0}>

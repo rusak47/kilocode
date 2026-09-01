@@ -3,6 +3,7 @@ import {
   createContext,
   createEffect,
   createMemo,
+  ErrorBoundary, // kilocode_change
   onCleanup, // kilocode_change
   createSignal,
   For,
@@ -14,6 +15,7 @@ import {
   untrack,
   useContext,
 } from "solid-js"
+import { writeSync } from "node:fs"
 import { Dynamic } from "solid-js/web"
 import path from "node:path"
 import { mkdir, writeFile } from "node:fs/promises"
@@ -109,6 +111,35 @@ const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
 const GO_UPSELL_PROVIDERS = new Set(["opencode", "opencode-go"])
 
 export const alwaysSeparate = new WeakSet<BoxRenderable>()
+
+// kilocode_change start - render sequence + first-error latch for native element crash isolation
+let renderSeq = 0
+let seqWall = 0
+let firstErrorLogged = false
+function nextSeq() {
+  seqWall = typeof performance !== "undefined" ? performance.now() : Date.now()
+  return ++renderSeq
+}
+// kilocode_change end
+
+function debugTui(label: string, value: Record<string, unknown>) {
+  if (!process.env.KILO_DEBUG_EVENTS) return
+  writeSync(1, `${label} ${JSON.stringify(value)}\n`)
+}
+
+function debugPart(part: Part) {
+  const text = part.type === "text" || part.type === "reasoning" ? part.text : undefined
+  return {
+    id: part.id,
+    type: part.type,
+    textLength: typeof text === "string" ? text.length : undefined,
+    lineCount: typeof text === "string" ? text.split("\n").length : undefined,
+    tool: part.type === "tool" ? part.tool : undefined,
+    toolStatus: part.type === "tool" ? part.state.status : undefined,
+    synthetic: "synthetic" in part ? part.synthetic : undefined,
+    ignored: "ignored" in part ? part.ignored : undefined,
+  }
+}
 
 type RetryAction = Extract<SessionStatus, { type: "retry" }>["action"]
 
@@ -214,6 +245,13 @@ export function Session() {
   const { theme } = useTheme()
   const promptRef = usePromptRef()
   const session = createMemo(() => sync.session.get(route.sessionID))
+  // kilocode_change - debug: track session() memo transitions to correlate handler teardown
+  createEffect(() => {
+    const s = session()
+    if (process.env.KILO_DEBUG_EVENTS) {
+      writeSync(1, "[TUI session memo] defined=" + (s ? "true" : "false") + " sessionID=" + route.sessionID + "\n")
+    }
+  })
   const location = createMemo(() => {
     const current = session()
     return current ? { directory: current.directory, workspaceID: current.workspaceID } : undefined
@@ -224,6 +262,16 @@ export function Session() {
     setEpilogue(sessionEpilogue({ title, sessionID: session()?.id }))
   })
   onCleanup(() => setEpilogue())
+  onMount(() => {
+    if (process.env.KILO_DEBUG_EVENTS) {
+      writeSync(1, "[TUI Session mount] sessionID=" + route.sessionID + "\n")
+    }
+  })
+  onCleanup(() => {
+    if (process.env.KILO_DEBUG_EVENTS) {
+      writeSync(1, "[TUI Session unmount] sessionID=" + route.sessionID + "\n")
+    }
+  })
   const children = createMemo(() => {
     const parentID = session()?.parentID ?? session()?.id
     return sync.data.session
@@ -231,6 +279,63 @@ export function Session() {
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+  const maxParts = createMemo(() => {
+    const value = Number(process.env.KILO_DEBUG_MAX_PARTS)
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined
+  })
+  const renderedParts = createMemo(() => {
+    const max = maxParts()
+    const out = new Map<string, Part[]>()
+    let used = 0
+    for (const message of messages()) {
+      const all = sync.data.part[message.id] ?? []
+      if (!max) {
+        out.set(message.id, all)
+        continue
+      }
+      const take = Math.max(0, max - used)
+      const next = all.slice(Math.max(0, all.length - take))
+      out.set(message.id, next)
+      used += next.length
+    }
+    return out
+  })
+  createEffect(() => {
+    const list = messages()
+    const parts = list.flatMap((message) => sync.data.part[message.id] ?? [])
+    const counts = parts.reduce<Record<string, number>>((out, part) => {
+      out[part.type] = (out[part.type] ?? 0) + 1
+      return out
+    }, {})
+    debugTui("[TUI transcript snapshot]", {
+      sessionID: route.sessionID,
+      messageCount: list.length,
+      partCount: parts.length,
+      renderedPartCount: [...renderedParts().values()].reduce((sum, item) => sum + item.length, 0),
+      maxParts: maxParts() ?? null,
+      counts,
+      width: dimensions?.()?.width,
+      height: dimensions?.()?.height,
+      stdoutIsTTY: process.stdout.isTTY ?? false,
+    })
+  })
+  onMount(() => {
+    let last = performance.now()
+    const timer = setInterval(() => {
+      const now = performance.now()
+      const elapsed = now - last
+      last = now
+      if (elapsed > 500) {
+        debugTui("[TUI heartbeat gap]", {
+          sessionID: route.sessionID,
+          elapsedMs: Math.round(elapsed),
+          rendererDestroyed: renderer.isDestroyed,
+          stdoutIsTTY: process.stdout.isTTY ?? false,
+        })
+      }
+    }, 250)
+    onCleanup(() => clearInterval(timer))
+  })
   const foregroundTasks = createMemo(() =>
     sync.data.capabilities.experimentalBackgroundSubagents
       ? messages().flatMap((message) =>
@@ -328,6 +433,8 @@ export function Session() {
 
   const wide = createMemo(() => dimensions().width > 120)
   const sidebarVisible = createMemo(() => {
+    // kilocode_change - debug: reproduce headless layout without changing terminal dimensions
+    if (process.env.KILO_DEBUG_SKIP_SIDEBAR === "1") return false
     if (session()?.parentID) return false
     if (sidebarOpen()) return true
     if (sidebar() === "auto" && wide()) return true
@@ -383,42 +490,123 @@ export function Session() {
 
   createEffect(() => {
     const sessionID = route.sessionID
+    const currentWorkspace = project.workspace.current()
+    if (process.env.KILO_DEBUG_EVENTS) {
+      writeSync(
+        1,
+        "[TUI session effect re-run] " +
+          JSON.stringify({ sessionID, workspace: currentWorkspace, routeType: route.type, routeSessionID: route.sessionID }) +
+          "\n",
+      )
+    }
     void (async () => {
       const previousWorkspace = untrack(() => project.workspace.current())
-      const result = await sdk.client.session.get({ sessionID }, { throwOnError: true })
-      if (!result.data) {
+      if (process.env.KILO_DEBUG_EVENTS) {
+        writeSync(
+          1,
+          "[TUI session get start] " +
+            JSON.stringify({
+              sessionID,
+              currentWorkspace: previousWorkspace,
+              routeSessionID: route.sessionID,
+              routeData: route,
+              projectDir: project.data.instance.path.directory,
+            }) +
+            "\n",
+        )
+      }
+      try {
+        const result = await sdk.client.session.get({ sessionID }, { throwOnError: true })
+        if (process.env.KILO_DEBUG_EVENTS) {
+          writeSync(
+            1,
+            "[TUI session get result] " +
+              JSON.stringify({
+                sessionID,
+                routeSessionID: route.sessionID,
+                ok: !!result?.data,
+                workspaceID: result?.data?.workspaceID ?? null,
+                directory: result?.data?.directory ?? null,
+                error: result?.error ?? null,
+              }) +
+              "\n",
+          )
+        }
+        if (!result.data) {
+          if (process.env.KILO_DEBUG_EVENTS) {
+            writeSync(1, "[TUI session get missing] sessionID=" + sessionID + " routeSessionID=" + route.sessionID + "\n")
+          }
+          toast.show({
+            message: `Session not found: ${sessionID}`,
+            variant: "error",
+            duration: 5000,
+          })
+          navigate({ type: "home" })
+          return
+        }
+
+        if (result.data.workspaceID !== previousWorkspace) {
+          // kilocode_change start - workspace mismatch; skip workspace switch+bootstrap here to avoid
+          // orphaned-fork sessions. session.get is already global by ID, and sync.session.sync below
+          // re-populates the store without wiping it. workspace switch + bootstrap orphaned fork
+          // sessions when their home workspace wasn't present in the current branch context.
+          writeSync(
+            1,
+            "[TUI session workspace mismatch] session.ws=" +
+              result.data.workspaceID +
+              " current=" +
+              previousWorkspace +
+              " sessionID=" +
+              sessionID +
+              " routeSessionID=" +
+              route.sessionID +
+              " — skipping switch\n",
+          )
+          // kilocode_change end
+        }
+        editor.reconnect(result.data.directory)
+        await sync.session.sync(sessionID)
+        if (process.env.KILO_DEBUG_EVENTS) {
+          writeSync(1, "[TUI session sync complete] sessionID=" + sessionID + " routeSessionID=" + route.sessionID + "\n")
+        }
+        if (route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
+      } catch (error) {
+        if (process.env.KILO_DEBUG_EVENTS) {
+          const safeError =
+            error instanceof Error
+              ? {
+                  name: error.name,
+                  message: error.message,
+                  stack: error.stack,
+                  cause: error.cause,
+                }
+              : {
+                  value: String(error),
+                  type: typeof error,
+                }
+          writeSync(
+            1,
+            "[TUI session get error] " +
+              JSON.stringify({
+                sessionID,
+                routeSessionID: route.sessionID,
+                currentWorkspace: project.workspace.current(),
+                routeData: route,
+                projectDir: project.data.instance.path.directory,
+                error: safeError,
+              }) +
+              "\n",
+          )
+        }
+        if (route.sessionID !== sessionID) return
         toast.show({
-          message: `Session not found: ${sessionID}`,
+          message: errorMessage(error),
           variant: "error",
           duration: 5000,
         })
         navigate({ type: "home" })
-        return
       }
-
-      if (result.data.workspaceID !== previousWorkspace) {
-        project.workspace.set(result.data.workspaceID)
-
-        // Sync all the data for this workspace. Note that this
-        // workspace may not exist anymore which is why this is not
-        // fatal. If it doesn't we still want to show the session
-        // (which will be non-interactive)
-        try {
-          await sync.bootstrap({ fatal: false })
-        } catch {}
-      }
-      editor.reconnect(result.data.directory)
-      await sync.session.sync(sessionID)
-      if (route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
-    })().catch((error) => {
-      if (route.sessionID !== sessionID) return
-      toast.show({
-        message: errorMessage(error),
-        variant: "error",
-        duration: 5000,
-      })
-      navigate({ type: "home" })
-    })
+    })()
   })
 
   let lastSwitch: string | undefined = undefined
@@ -1327,7 +1515,16 @@ export function Session() {
                 </Show>
                 {/* kilocode_change end */}
                 <For each={messages()}>
-                  {(message, index) => (
+                  {(message, index) => {
+                    const parts = renderedParts().get(message.id) ?? []
+                    debugTui("[TUI message render]", {
+                      sessionID: route.sessionID,
+                      messageID: message.id,
+                      messageIndex: index(),
+                      role: message.role,
+                      partCount: parts.length,
+                    })
+                    return (
                     <Switch>
                       <Match when={message.id === revert()?.messageID}>
                         {(function () {
@@ -1406,7 +1603,7 @@ export function Session() {
                             ))
                           }}
                           message={message as UserMessage}
-                          parts={sync.data.part[message.id] ?? []}
+                          parts={parts}
                           pending={pending()}
                         />
                       </Match>
@@ -1414,11 +1611,12 @@ export function Session() {
                         <AssistantMessage
                           last={lastAssistant()?.id === message.id}
                           message={message as AssistantMessage}
-                          parts={sync.data.part[message.id] ?? []}
+                          parts={parts}
                         />
                       </Match>
                     </Switch>
-                  )}
+                    )
+                  }}
                 </For>
               </scrollbox>
               <box flexShrink={0}>
@@ -1621,6 +1819,17 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
   const routed = createMemo(() => RoutedModelMeta.info(ctx.providers(), props.parts, ctx.showDetails(), props.message)) // kilocode_change
   const route = createMemo(() => routed().footer) // kilocode_change
+  // kilocode_change start - trace every AssistantMessage footer recompute, including empty/undefined
+  createEffect(() => {
+    const r = route()
+    if (process.env.KILO_DEBUG_EVENTS) {
+      writeSync(
+        1,
+        `[TUI AssistantMessage footer] messageID=${props.message.id} last=${props.last} footerLen=${typeof r === "string" ? r.length : "n/a"} footerPreview=${JSON.stringify(typeof r === "string" ? r.slice(0, 120) : r)} providerID=${props.message.providerID} modelID=${props.message.modelID}\n`,
+      )
+    }
+  })
+  // kilocode_change end
 
   const final = createMemo(() => {
     return props.message.finish && !["tool-calls", "unknown"].includes(props.message.finish)
@@ -1644,14 +1853,45 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
         <For each={props.parts}>
           {(part, index) => {
             const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
+            const thisSeq = nextSeq()
+            debugTui("[TUI part render]", {
+              sessionID: props.message.sessionID,
+              messageID: props.message.id,
+              partIndex: index(),
+              renderSeq: thisSeq,
+              ...debugPart(part),
+            })
             return (
               <Show when={component()}>
-                <Dynamic
-                  last={index() === props.parts.length - 1}
-                  component={component()}
-                  part={part as any}
-                  message={props.message}
-                />
+                <ErrorBoundary
+                  fallback={(error) => {
+                    // kilocode_change start - first-error latch fires only once; capture exact part + seq + stack before fallback masks it
+                    firstErrorLatch(error, {
+                      where: "part ErrorBoundary fallback",
+                      messageID: props.message.id,
+                      partID: part.id,
+                      partType: part.type,
+                      seq: thisSeq,
+                    })
+                    debugTui("[TUI session part error]", {
+                      sessionID: props.message.sessionID,
+                      messageID: props.message.id,
+                      partID: part.id,
+                      partType: part.type,
+                      errorName: error instanceof Error ? error.name : undefined,
+                      errorMessage: error instanceof Error ? error.message : String(error),
+                      errorStack: error instanceof Error ? error.stack : undefined,
+                    })
+                    return null
+                  }}
+                >
+                  <Dynamic
+                    last={index() === props.parts.length - 1}
+                    component={component()}
+                    part={part as any}
+                    message={props.message}
+                  />
+                </ErrorBoundary>
               </Show>
             )
           }}
@@ -1765,12 +2005,36 @@ function StepFinishPart(props: { last: boolean; part: StepFinishPart; message: A
   })
   const consumed = createMemo(() => info().consumed.has(props.part.id))
 
+  // kilocode_change start - trace exact bytes this part renders into the native <text> element
+  const routedValue = routed()
+  if (process.env.KILO_DEBUG_EVENTS) {
+    writeSync(
+      1,
+      `[TUI StepFinish render] raw_label=${JSON.stringify(routedValue)} consumed=${consumed()} providerID=${props.message.providerID} modelID=${props.message.modelID} partModel=${JSON.stringify(props.part.model)}\n`,
+    )
+  }
+  // kilocode_change end
+
   return (
-    <Show when={routed() && !consumed()}>
+    <Show when={routedValue && !consumed()}>
       <box paddingLeft={3} marginTop={1}>
-        <text fg={theme.textMuted}>Routed to {routed()}</text>
+        <text fg={theme.textMuted}>Routed to {routedValue}</text>
       </box>
     </Show>
+  )
+}
+// kilocode_change end
+
+// kilocode_change start - shared first-error latch: capture the very first native/OpenTUI crash stack+seq+message context before any fallback rendering obscures it
+function firstErrorLatch(err: unknown, ctx: { where: string; messageID?: string; partID?: string; partType?: string; seq?: number }) {
+  if (firstErrorLogged) return
+  firstErrorLogged = true
+  const e = err instanceof Error ? err : new Error(String(err))
+  writeSync(
+    1,
+    `[TUI first-error] where=${ctx.where} seq=${ctx.seq ?? "?"} partType=${ctx.partType ?? "?"} messageID=${ctx.messageID ?? "?"} partID=${ctx.partID ?? "?"}\n` +
+      `[TUI first-error stack] ${e.stack ?? e.message}\n` +
+      `[TUI first-error renderer] renderSeq=${(globalThis as any).__kilo_render_seq ?? "?"} seqWall=${(globalThis as any).__kilo_seqWall ?? "?"}\n`,
   )
 }
 // kilocode_change end
@@ -1778,6 +2042,14 @@ function StepFinishPart(props: { last: boolean; part: StepFinishPart; message: A
 function ReasoningPart(props: { last: boolean; part: ReasoningPart; message: AssistantMessage }) {
   const { theme } = useTheme()
   const ctx = use()
+  // kilocode_change start - trace entry into this renderer
+  if (process.env.KILO_DEBUG_EVENTS) {
+    writeSync(
+      1,
+      `[TUI ReasoningPart enter] partID=${props.part.id} messageID=${props.message.id} textLength=${typeof props.part.text === "string" ? props.part.text.length : "?"} done=${props.part.time.end !== undefined}\n`,
+    )
+  }
+  // kilocode_change end
   // Collapsed by default in hide mode: a single line throughout, so the
   // layout never shifts. Click to open the full markdown block, click to close.
   const [expanded, setExpanded] = createSignal(false)
@@ -1855,6 +2127,15 @@ function ReasoningHeader(props: {
       ? RGBA.fromValues(theme.warning.r, theme.warning.g, theme.warning.b, theme.thinkingOpacity)
       : theme.warning
 
+  // kilocode_change start - trace whether this reasoning header constructs a <text> and what routed label it embeds
+  if (process.env.KILO_DEBUG_EVENTS) {
+    writeSync(
+      1,
+      `[TUI ReasoningHeader render] partID=${props.partID ?? "?"} done=${props.done} open=${props.open} toggleable=${props.toggleable} title=${JSON.stringify(props.title)} duration=${JSON.stringify(props.duration)}\n`,
+    )
+  }
+  // kilocode_change end
+
   return (
     <Switch>
       <Match when={!props.done}>
@@ -1892,11 +2173,87 @@ function ReasoningHeader(props: {
 function TextPart(props: { last: boolean; part: TextPart; message: AssistantMessage }) {
   const ctx = use()
   const { theme, syntax } = useTheme()
-  // kilocode_change start - format markdown tables with fixed-width columns
-  const content = createMemo(() => formatMarkdownTables(props.part.text.trim()))
+  const renderer = useRenderer()
+  const dimensions = useTerminalDimensions()
+  // kilocode_change start - trace entry into this renderer
+  if (process.env.KILO_DEBUG_EVENTS) {
+    writeSync(
+      1,
+      `[TUI TextPart enter] partID=${props.part.id} messageID=${props.message.id} textLength=${typeof props.part.text === "string" ? props.part.text.length : "?"} rendererIsDestroyed=${renderer?.isDestroyed ?? "?"}\n`,
+    )
+  }
   // kilocode_change end
+  // kilocode_change start - format markdown tables with fixed-width columns
+  const content = createMemo(() => {
+    const raw = typeof props.part.text === "string" ? props.part.text.trim() : ""
+    debugTui("[TUI TextPart enter]", {
+      sessionID: props.message.sessionID,
+      messageID: props.message.id,
+      partID: props.part.id,
+      rawLength: raw.length,
+      rawLineCount: raw.split("\n").length,
+    })
+    try {
+      const formatted = formatMarkdownTables(raw)
+      debugTui("[TUI TextPart formatted]", {
+        sessionID: props.message.sessionID,
+        messageID: props.message.id,
+        partID: props.part.id,
+        rawLength: raw.length,
+        formattedLength: formatted.length,
+        rawLineCount: raw.split("\n").length,
+        formattedLineCount: formatted.split("\n").length,
+        expanded: formatted.length > raw.length,
+      })
+      if (process.env.KILO_DEBUG_TEXT_PART) {
+        let preview = raw.slice(0, 200)
+        // flag pathological chunks that tend to break TextBuffer construction
+        const hasLongLine = raw.split("\n").some((l) => l.length > 10000)
+        const info: { len: number; preview: string; longLine: boolean; partID: string; msg: string; role: string; linecount: number; maxlinelen: number } = {
+          len: raw.length,
+          preview,
+          longLine: hasLongLine,
+          partID: props.part.id ?? "no-id",
+          msg: props.message.id ?? "no-msg",
+          role: props.message.role ?? "no-role",
+          linecount: raw.split("\n").length,
+          maxlinelen: Math.max(...raw.split("\n").map((l) => l.length), 0),
+        }
+        console.error("[KILO TextPart] ", JSON.stringify(info))
+      }
+      return formatted
+    } catch (err) {
+      console.error("[KILO TextPart CRASH] raw_len=", raw.length, "max_linelen=", raw.split("\n").map((l) => l.length).reduce((a, b) => Math.max(a, b), 0), "preview=", raw.slice(0, 300), "err=", err instanceof Error ? err.message : String(err))
+      throw err
+    }
+  })
+  // kilocode_change end
+  const text = createMemo(() => (typeof props.part.text === "string" ? props.part.text.trim() : ""))
+  debugTui("[TUI TextPart markdown create]", {
+    sessionID: props.message.sessionID,
+    messageID: props.message.id,
+    partID: props.part.id,
+    rawLength: text().length,
+    formattedLength: content().length,
+  })
+  debugTui("[TUI TextPart native begin]", {
+    sessionID: props.message.sessionID,
+    messageID: props.message.id,
+    partID: props.part.id,
+    last: props.last,
+    rawLength: text().length,
+    formattedLength: content().length,
+    rawLineCount: text().split("\n").length,
+    formattedLineCount: content().split("\n").length,
+    rawPreview: text().slice(0, 120),
+    formattedPreview: content().slice(0, 120),
+    cols: dimensions().width,
+    rows: dimensions().height,
+    rendererDestroyed: renderer.isDestroyed,
+    stdoutIsTTY: process.stdout.isTTY ?? false,
+  })
   return (
-    <Show when={props.part.text.trim()}>
+    <Show when={text()}>
       <box ref={(el: BoxRenderable) => alwaysSeparate.add(el)} paddingLeft={3} marginTop={1} flexShrink={0}>
         <markdown
           syntaxStyle={syntax()}
@@ -1917,6 +2274,14 @@ function TextPart(props: { last: boolean; part: TextPart; message: AssistantMess
 
 function ToolPart(props: { last: boolean; part: ToolPart; message: AssistantMessage }) {
   const ctx = use()
+  // kilocode_change start - trace entry into this renderer
+  if (process.env.KILO_DEBUG_EVENTS) {
+    writeSync(
+      1,
+      `[TUI ToolPart enter] partID=${props.part.id} messageID=${props.message.id} tool=${props.part.tool} status=${(props.part.state as any)?.status ?? "?"}\n`,
+    )
+  }
+  // kilocode_change end
   const display = createMemo(() => toolDisplay(props.part.tool))
 
   // Hide tool if showDetails is false and tool completed successfully

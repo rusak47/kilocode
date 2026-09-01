@@ -3,6 +3,7 @@ import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui"
 import { Deferred, Effect } from "effect"
 import { Global } from "@opencode-ai/core/global"
 import { Flag } from "@opencode-ai/core/flag/flag"
+import { writeSync } from "node:fs"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { ClipboardProvider, useClipboard } from "./context/clipboard"
 import { ExitProvider, useExit } from "./context/exit"
@@ -247,19 +248,67 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
         if (renderer.isDestroyed) return
 
         // kilocode_change start - expose the renderer-owned exit without moving remote RPC into the shared TUI
+        if (process.env.KILO_DEBUG_EVENTS) {
+          writeSync(1, "[TUI App mount] starting render\n")
+        }
         const close: Exit = (reason) => {
           if (renderer.isDestroyed) return
+          if (process.env.KILO_DEBUG_EVENTS) {
+            writeSync(1, "[TUI App unmount] close=" + close + " reason=" + reason + "\n")
+          }
           exit.reason = reason
           destroyRenderer(renderer)
         }
         input.onExit?.(close)
         // kilocode_change end
 
+        if (process.env.KILO_DEBUG_EVENTS) {
+          writeSync(
+            1,
+            "[TUI app render begin] " +
+              JSON.stringify({
+                rendererDestroyed: renderer.isDestroyed,
+                cwd: process.cwd(),
+                cols: process.stdout.columns,
+                rows: process.stdout.rows,
+                themeMode: mode,
+              }) +
+              "\n",
+          )
+        }
         await render(() => {
           return (
             <ExitProvider exit={close /* kilocode_change - reuse the externally registered renderer exit */}>
               <EpilogueProvider set={(value) => (exit.epilogue = value)}>
-                <ErrorBoundary fallback={(error, reset) => <ErrorComponent error={error} reset={reset} mode={mode} />}>
+                <ErrorBoundary
+                  fallback={(error, reset) => {
+                    // kilocode_change start - first-error latch: capture exact stack even when ErrorComponent itself fails to render
+                    writeSync(
+                      1,
+                      `[TUI app-boundary first-error] name=${error?.name ?? "?"} message=${
+                        error instanceof Error ? error.message : String(error)
+                      }\n[TUI app-boundary first-error stack] ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+                    )
+                    // kilocode_change end
+                    if (process.env.KILO_DEBUG_EVENTS) {
+                      writeSync(
+                        1,
+                        "[TUI app error boundary fallback] " +
+                          JSON.stringify({
+                            rendererDestroyed: renderer.isDestroyed,
+                            cols: process.stdout.columns,
+                            rows: process.stdout.rows,
+                            errorName: error?.name,
+                            errorMessage: error instanceof Error ? error.message : String(error),
+                            errorStack: error instanceof Error ? error.stack : undefined,
+                            themeMode: mode,
+                          }) +
+                          "\n",
+                      )
+                    }
+                    return <ErrorComponent error={error} reset={reset} mode={mode} />
+                  }}
+                >
                   <TuiPathsProvider
                     value={{
                       cwd: process.cwd(),
@@ -1037,9 +1086,27 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
   })
 
   event.on("session.error", (evt, { workspace }) => {
-    if (workspace !== project.workspace.current()) return
     const error = evt.properties.error
-    if (error && typeof error === "object" && error.name === "MessageAbortedError") return
+    if (process.env.KILO_DEBUG_EVENTS) {
+      writeSync(
+        1,
+        "[TUI app session.error] " +
+          JSON.stringify({
+            eventType: evt.type,
+            workspace,
+            currentWorkspace: project.workspace.current(),
+            route: route.data,
+            sessionID: evt.properties.sessionID ?? null,
+            errorName: error && typeof error === "object" && "name" in error ? String(error.name) : typeof error,
+            errorMessage:
+              error && typeof error === "object" && "message" in error ? String((error as { message?: unknown }).message) : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }) +
+          "\n",
+      )
+    }
+    if (workspace !== project.workspace.current()) return
+    if (error && typeof error === "object" && "name" in error && error.name === "MessageAbortedError") return
     if (KiloApp.handleSessionError(error, toast)) return // kilocode_change
     const message = errorMessage(error)
 
@@ -1128,6 +1195,12 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
         <TimeToFirstDraw />
       </Show>
       <Show when={ready()}>
+        {(() => {
+          // kilocode_change - debug: log route/ready transitions to correlate handler teardown
+          if (process.env.KILO_DEBUG_EVENTS) {
+            writeSync(1, "[TUI route] type=" + route.data.type + " sessionID=" + (route.data.type === "session" ? route.data.sessionID : "n/a") + " ready=" + ready() + "\n")
+          }
+        })()}
         <box flexGrow={1} minHeight={0} flexDirection="column">
           <Switch>
             <Match when={route.data.type === "home"}>

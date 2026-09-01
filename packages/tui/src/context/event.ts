@@ -1,4 +1,5 @@
 import type { Event, GlobalEvent } from "@kilocode/sdk/v2"
+import { writeSync } from "node:fs"
 
 // kilocode_change start - normalize the runtime SyncEvent wire envelope to the legacy consumer shape
 type NormalizeSync<T> = T extends {
@@ -70,12 +71,17 @@ export function useEvent(sessionID?: () => string | undefined) {
         return
       }
 
+      let gate = true
       if (event.directory !== "global" && event.project !== project.project()) { // kilocode_change - allow current session/workspace events to bypass project mismatch while project syncs
         const current = sessionID?.()
         const props = (event.payload as { properties?: { sessionID?: string } }).properties
         const sessionMatches = current && props?.sessionID === current
         const workspaceMatches = event.workspace && project.workspace.current() && event.workspace === project.workspace.current()
-        if (!sessionMatches && !workspaceMatches) return
+        gate = !!(sessionMatches || workspaceMatches)
+      }
+      if (!gate) return
+      if (process.env.KILO_DEBUG_EVENTS) {
+        writeSync(1, "[TUI subscribe gate] " + JSON.stringify({ gate, project: project.project(), workspaceCurrent: project.workspace.current(), eventDirectory: event.directory, eventProject: event.project, eventWorkspace: event.workspace, eventPayloadType: (event.payload as any)?.type, eventAggregateID: (event.payload as any)?.aggregateID }) + "\n")
       }
       handler(event.payload, { directory: event.directory, workspace: event.workspace })
     })
@@ -86,6 +92,9 @@ export function useEvent(sessionID?: () => string | undefined) {
       const payload = normalizeSyncEvent(event.payload)
       if (!payload) return
       if (event.directory === "global" || event.project === project.project() || payload.aggregateID === sessionID?.() || (event.workspace && project.workspace.current() && event.workspace === project.workspace.current())) {
+        if (process.env.KILO_DEBUG_EVENTS) {
+          writeSync(1, "[TUI sync gate] " + JSON.stringify({ pass: true, aggregateID: payload.aggregateID, eventDirectory: event.directory, eventProject: event.project, project: project.project() }) + "\n")
+        }
         handler(payload, { directory: event.directory, workspace: event.workspace })
       }
     })

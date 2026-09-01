@@ -6,6 +6,7 @@ import { Config } from "@/config/config"
 import { GlobalBus } from "@/bus/global"
 import { ServerAuth } from "@/server/auth"
 import { writeHeapSnapshot } from "node:v8"
+import { writeSync } from "node:fs"
 import { Heap } from "@/cli/heap"
 import { AppRuntime } from "@/effect/app-runtime"
 import { Effect } from "effect"
@@ -35,6 +36,11 @@ process.on("uncaughtException", onUncaughtException)
 
 // Subscribe to global events and forward them via RPC
 GlobalBus.on("event", (event) => {
+  if (process.env.KILO_DEBUG_EVENTS) {
+    const payloadType = (event.payload as { type?: string })?.type
+    const aggregateID = (event.payload as { aggregateID?: string })?.aggregateID
+    writeSync(1, "[WORKER RPC] " + JSON.stringify({ type: payloadType, aggregateID, directory: event.directory, workspace: event.workspace }) + "\n")
+  }
   Rpc.emit("global.event", event)
 })
 

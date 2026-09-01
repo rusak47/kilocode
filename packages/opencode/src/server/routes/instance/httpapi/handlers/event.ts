@@ -4,6 +4,7 @@ import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { EventV2 } from "@opencode-ai/core/event"
 import { Effect, Queue } from "effect"
 import * as Stream from "effect/Stream"
+import { writeSync } from "node:fs"
 import { HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import * as Sse from "effect/unstable/encoding/Sse"
@@ -33,6 +34,11 @@ function eventResponse(events: EventV2.Interface) {
     const listener = (event: GlobalEvent) => {
       if (event.directory !== instance.directory) return
       if (event.workspace !== undefined && event.workspace !== workspaceID) return
+      if (process.env.KILO_DEBUG_EVENTS) {
+        const payloadType = (event.payload as { type?: string })?.type
+        const aggregateID = (event.payload as { aggregateID?: string })?.aggregateID
+        writeSync(1, "[SERVER event gate] " + JSON.stringify({ type: payloadType, aggregateID, directory: event.directory, workspace: event.workspace, instanceDirectory: instance.directory, workspaceID }) + "\n")
+      }
       Queue.offerUnsafe(queue, event.payload)
     }
     yield* Effect.acquireRelease(

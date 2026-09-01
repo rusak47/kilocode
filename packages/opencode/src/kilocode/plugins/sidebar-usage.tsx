@@ -33,6 +33,7 @@ type MetricSample = {
 }
 
 function View(props: { api: TuiPluginApi; session_id: string }) {
+  if (process.env.KILO_DEBUG_SKIP_SIDEBAR === "1" || process.env.KILO_DEBUG_SKIP_SIDEBAR_USAGE === "1") return null
   const [usageOpen, setUsageOpen] = createSignal(true)
   const [modelsOpen, setModelsOpen] = createSignal(true)
   const [benchOpen, setBenchOpen] = createSignal(true)

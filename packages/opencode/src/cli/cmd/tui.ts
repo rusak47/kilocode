@@ -12,6 +12,7 @@ import { Filesystem } from "@/util/filesystem"
 import type { GlobalEvent } from "@kilocode/sdk/v2"
 import type { EventSource } from "@opencode-ai/tui/context/sdk"
 import { writeHeapSnapshot } from "v8"
+import { writeSync } from "node:fs"
 import type { StartInput } from "@/kilocode/cli/cmd/tui/thread" // kilocode_change - runtime imports deferred into handlers
 import { win32InstallCtrlCGuard } from "@opencode-ai/tui/terminal-win32"
 import { validateSession } from "../tui/validate-session"
@@ -101,9 +102,23 @@ function createWorkerFetch(client: RpcClient): typeof fetch {
 function createEventSource(client: RpcClient): EventSource {
   return {
     subscribe: async (handler) => {
-      return client.on<GlobalEvent>("global.event", (e) => {
+      if (process.env.KILO_DEBUG_EVENTS) {
+        writeSync(1, "[TUI EventSource subscribe] called\n")
+      }
+      const unsub = client.on<GlobalEvent>("global.event", (e) => {
+        if (process.env.KILO_DEBUG_EVENTS) {
+          const payloadType = (e as { payload?: { type?: string } })?.payload?.type
+          const aggregateID = (e as { aggregateID?: string })?.aggregateID
+          writeSync(1, "[TUI RPC rcvd] " + JSON.stringify({ type: payloadType, aggregateID }) + "\n")
+        }
         handler(e)
       })
+      return () => {
+        if (process.env.KILO_DEBUG_EVENTS) {
+          writeSync(1, "[TUI EventSource unsubscribe] called\n")
+        }
+        return unsub()
+      }
     },
   }
 }

@@ -8,6 +8,7 @@ import { usePluginRuntime } from "../../plugin/runtime"
 
 import { getScrollAcceleration } from "../../util/scroll"
 import { WorkspaceLabel } from "../../component/workspace-label"
+import { skipSidebar } from "../../feature-plugins/sidebar/section"
 
 export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
   const pluginRuntime = usePluginRuntime()
@@ -22,6 +23,22 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
     return project.workspace.get(workspaceID)
   }
   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
+  console.debug("[TUI sidebar state]", {
+    sessionID: props.sessionID,
+    session: session()
+      ? {
+          directory: session()!.directory,
+          workspaceID: session()!.workspaceID,
+          title: session()!.title,
+        }
+      : null,
+    path: sync.path,
+    diffCount: sync.data.session_diff[props.sessionID]?.length ?? 0,
+    todoCount: sync.data.todo[props.sessionID]?.length ?? 0,
+    messageCount: sync.data.message[props.sessionID]?.length ?? 0,
+    mcpCount: sync.data.mcp.length,
+    lspCount: sync.data.lsp.length,
+  })
 
   return (
     <Show when={session()}>
@@ -46,55 +63,59 @@ export function Sidebar(props: { sessionID: string; overlay?: boolean }) {
           }}
         >
           <box flexShrink={0} gap={1} paddingRight={1}>
-            <pluginRuntime.Slot
-              name="sidebar_title"
-              mode="single_winner"
-              session_id={props.sessionID}
-              title={session()!.title}
-              share_url={session()!.share?.url}
-            >
-              <box paddingRight={1}>
-                <text fg={theme.text}>
-                  <b>{session()!.title}</b>
-                </text>
-                <Show when={InstallationChannel !== "latest"}>
-                  <text fg={theme.textMuted}>{props.sessionID}</text>
-                </Show>
-                <Show when={session()!.workspaceID}>
-                  <text fg={theme.textMuted}>
-                    <Show
-                      when={workspace()}
-                      fallback={<WorkspaceLabel type="unknown" name={session()!.workspaceID!} status="error" icon />}
-                    >
-                      {(item) => (
-                        <WorkspaceLabel
-                          type={item().type}
-                          name={item().name}
-                          status={project.workspace.status(item().id) ?? "error"}
-                          icon
-                        />
-                      )}
-                    </Show>
+            <Show when={!skipSidebar("title")}>
+              <pluginRuntime.Slot
+                name="sidebar_title"
+                mode="single_winner"
+                session_id={props.sessionID}
+                title={session()!.title}
+                share_url={session()!.share?.url}
+              >
+                <box paddingRight={1}>
+                  <text fg={theme.text}>
+                    <b>{session()!.title}</b>
                   </text>
-                </Show>
-                <Show when={session()!.share?.url}>
-                  <text fg={theme.textMuted}>{session()!.share!.url}</text>
-                </Show>
-              </box>
-            </pluginRuntime.Slot>
+                  <Show when={InstallationChannel !== "latest"}>
+                    <text fg={theme.textMuted}>{props.sessionID}</text>
+                  </Show>
+                  <Show when={session()!.workspaceID}>
+                    <text fg={theme.textMuted}>
+                      <Show
+                        when={workspace()}
+                        fallback={<WorkspaceLabel type="unknown" name={session()!.workspaceID!} status="error" icon />}
+                      >
+                        {(item) => (
+                          <WorkspaceLabel
+                            type={item().type}
+                            name={item().name}
+                            status={project.workspace.status(item().id) ?? "error"}
+                            icon
+                          />
+                        )}
+                      </Show>
+                    </text>
+                  </Show>
+                  <Show when={session()!.share?.url}>
+                    <text fg={theme.textMuted}>{session()!.share!.url}</text>
+                  </Show>
+                </box>
+              </pluginRuntime.Slot>
+            </Show>
             <pluginRuntime.Slot name="sidebar_content" session_id={props.sessionID} />
           </box>
         </scrollbox>
 
-        <box flexShrink={0} gap={1} paddingTop={1}>
-          <pluginRuntime.Slot name="sidebar_footer" mode="single_winner" session_id={props.sessionID}>
+        <Show when={!skipSidebar("footer")}>
+          <box flexShrink={0} gap={1} paddingTop={1}>
+            <pluginRuntime.Slot name="sidebar_footer" mode="single_winner" session_id={props.sessionID}>
             {/* kilocode_change start */}
             <text fg={theme.textMuted}>
               <span style={{ fg: theme.success }}>•</span> <b>Kilo</b> <span>{InstallationVersion}</span>
             </text>
             {/* kilocode_change end */}
-          </pluginRuntime.Slot>
-        </box>
+            </pluginRuntime.Slot>
+          </box>
+        </Show>
       </box>
     </Show>
   )

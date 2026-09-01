@@ -3,6 +3,7 @@ import type { Path, Workspace } from "@kilocode/sdk/v2"
 import { createStore, reconcile } from "solid-js/store"
 import { createSimpleContext } from "./helper"
 import { useSDK } from "./sdk"
+import { writeSync } from "node:fs"
 
 type WorkspaceStatus = "connected" | "connecting" | "disconnected" | "error"
 
@@ -62,6 +63,9 @@ export const { use: useProject, provider: ProjectProvider } = createSimpleContex
         setStore("workspace", "list", reconcile(listed.data))
         setStore("workspace", "status", reconcile(next))
         if (!listed.data.some((item) => item.id === store.workspace.current)) {
+          if (process.env.KILO_DEBUG_EVENTS) {
+            writeSync(1, "[TUI workspace current cleared] current=" + (store.workspace.current ?? "undefined") + "\n")
+          }
           setStore("workspace", "current", undefined)
         }
       })
@@ -93,6 +97,9 @@ export const { use: useProject, provider: ProjectProvider } = createSimpleContex
         set(next?: string | null) {
           const workspace = next ?? undefined
           if (store.workspace.current === workspace) return
+          if (process.env.KILO_DEBUG_EVENTS) {
+            writeSync(1, "[TUI workspace set] current=" + (store.workspace.current ?? "undefined") + " next=" + (workspace ?? "undefined") + "\n")
+          }
           setStore("workspace", "current", workspace)
         },
         list() {

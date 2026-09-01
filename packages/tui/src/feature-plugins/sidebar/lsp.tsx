@@ -1,6 +1,7 @@
 import type { TuiPlugin, TuiPluginApi } from "@kilocode/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
 import { createMemo, For, Show, createSignal } from "solid-js"
+import { SidebarSection, skipSidebar } from "./section"
 
 const id = "internal:sidebar-lsp"
 
@@ -9,6 +10,19 @@ function View(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
   const list = createMemo(() => props.api.state.lsp())
   const off = createMemo(() => !props.api.state.config.lsp)
+  console.debug("[TUI sidebar lsp]", {
+    count: list().length,
+    disabled: off(),
+    rows: list().map((item, index) => ({
+      index,
+      id: item.id,
+      idType: typeof item.id,
+      root: item.root,
+      rootType: typeof item.root,
+      status: item.status,
+      statusType: typeof item.status,
+    })),
+  })
 
   return (
     <box>
@@ -51,7 +65,12 @@ const tui: TuiPlugin = async (api) => {
     order: 300,
     slots: {
       sidebar_content() {
-        return <View api={api} />
+        if (skipSidebar("lsp")) return null
+        return (
+          <SidebarSection name="lsp">
+            <View api={api} />
+          </SidebarSection>
+        )
       },
     },
   })

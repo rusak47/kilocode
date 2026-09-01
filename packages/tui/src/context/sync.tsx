@@ -26,6 +26,7 @@ import type {
   IndexingStatus, // kilocode_change
 } from "@kilocode/sdk/v2"
 import { createStore, produce, reconcile } from "solid-js/store"
+import { writeSync } from "node:fs" // kilocode_change
 import { useProject } from "./project"
 import { useEvent } from "./event"
 import { useSDK } from "./sdk"
@@ -170,6 +171,9 @@ export const {
     // kilocode_change start
     function evict(sessionID: string) {
       const children = store.session.filter((session) => session.parentID === sessionID).map((session) => session.id)
+      if (process.env.KILO_DEBUG_EVENTS) {
+        writeSync(1, "[TUI sync evict] sessionID=" + sessionID + " childCount=" + children.length + "\n")
+      }
       setStore(
         produce((draft) => {
           for (const message of draft.message[sessionID] ?? []) delete draft.part[message.id]
@@ -638,6 +642,9 @@ export const {
 
     // kilocode_change start - retain versioned Sync events used by Kilo clients
     event.sync((event) => {
+      if (process.env.KILO_DEBUG_EVENTS) {
+        writeSync(1, "[TUI sync handler] name=" + event.name + " aggregateID=" + event.aggregateID + "\n")
+      }
       switch (event.name) {
         case "session.created.1": {
           const info = event.data.info
@@ -848,7 +855,36 @@ export const {
           void Promise.all([
             ...(args.continue ? [] : [sessionListPromise.then((sessions) => setStore("session", reconcile(sessions)))]),
             consoleStatePromise.then((consoleState) => setStore("console_state", reconcile(consoleState))),
-            sdk.client.command.list({ workspace }).then((x) => setStore("command", reconcile(x.data ?? []))),
+            sdk.client.command.list({ workspace }).then((x) => {
+              if (process.env.KILO_DEBUG_EVENTS) {
+                writeSync(
+                  1,
+                  "[TUI sync command.list] " +
+                    JSON.stringify({
+                      phase: "before-store",
+                      workspace,
+                      count: x.data?.length ?? 0,
+                      sessionCount: store.message ? Object.keys(store.message).length : 0,
+                    }) +
+                    "\n",
+                )
+              }
+              // kilocode_change start - sequence ID + seqWall stamp on store update, for correlation with crash
+              if (process.env.KILO_DEBUG_EVENTS) {
+                ;(globalThis as any).__kilo_render_seq = ((globalThis as any).__kilo_render_seq ?? 0) + 1
+                ;(globalThis as any).__kilo_seqWall =
+                  typeof performance !== "undefined" ? performance.now() : Date.now()
+                writeSync(
+                  1,
+                  `[TUI sync command.list after-store] seq=${
+                    (globalThis as any).__kilo_render_seq
+                  } seqWall=${(globalThis as any).__kilo_seqWall} count=${x.data?.length ?? 0} sessionKeys=${
+                    store.message ? Object.keys(store.message).length : 0
+                  }\n`,
+                )
+              }
+              // kilocode_change end
+            }),
             sdk.client.lsp.status({ workspace }).then((x) => setStore("lsp", reconcile(x.data ?? []))),
             sdk.client.mcp.status({ workspace }).then((x) => setStore("mcp", reconcile(x.data ?? {}))),
             sdk.client.experimental.resource
@@ -928,11 +964,14 @@ export const {
       void bootstrap()
     })
 
-    // kilocode_change start - re-bootstrap when Agent Manager changes workspace
+    // kilocode_change start - DEBUG workspace-change hook to trace teardown
     createEffect(
       on(
         () => project.workspace.current(),
         () => {
+          if (process.env.KILO_DEBUG_EVENTS) {
+            writeSync(1, "[TUI workspace changed] current=" + (project.workspace.current() ?? "undefined") + "\n")
+          }
           fullSyncedSessions.clear()
           void bootstrap()
         },

@@ -2,6 +2,7 @@ import { createStore, reconcile, unwrap } from "solid-js/store" // kilocode_chan
 import { createSimpleContext } from "./helper"
 import type { PromptInfo } from "../prompt/history"
 import { useTuiStartup } from "./runtime"
+import { writeSync } from "node:fs"
 
 export type HomeRoute = {
   type: "home"
@@ -47,6 +48,9 @@ export const { use: useRoute, provider: RouteProvider } = createSimpleContext({
       navigate(route: Route) {
         previous = structuredClone(unwrap(store)) // kilocode_change
         setStore(reconcile(route))
+        if (process.env.KILO_DEBUG_EVENTS) {
+          writeSync(1, "[TUI route] prev=" + JSON.stringify(previous) + " next=" + JSON.stringify(route) + "\n")
+        }
       },
       // kilocode_change start
       back() {

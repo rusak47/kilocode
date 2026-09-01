@@ -1,6 +1,7 @@
 import type { TuiPlugin, TuiPluginApi } from "@kilocode/plugin/tui"
 import type { BuiltinTuiPlugin } from "../builtins"
 import { createMemo, For, Match, Show, Switch, createSignal } from "solid-js"
+import { SidebarSection, skipSidebar } from "./section"
 
 const id = "internal:sidebar-mcp"
 
@@ -16,6 +17,18 @@ function View(props: { api: TuiPluginApi }) {
           item.status === "failed" || item.status === "needs_auth" || item.status === "needs_client_registration",
       ).length,
   )
+  console.debug("[TUI sidebar mcp]", {
+    count: list().length,
+    rows: list().map((item, index) => ({
+      index,
+      name: item.name,
+      nameType: typeof item.name,
+      status: item.status,
+      statusType: typeof item.status,
+      error: item.error,
+      errorType: typeof item.error,
+    })),
+  })
 
   const dot = (status: string) => {
     if (status === "connected") return theme().success
@@ -83,7 +96,12 @@ const tui: TuiPlugin = async (api) => {
     order: 200,
     slots: {
       sidebar_content() {
-        return <View api={api} />
+        if (skipSidebar("mcp")) return null
+        return (
+          <SidebarSection name="mcp">
+            <View api={api} />
+          </SidebarSection>
+        )
       },
     },
   })

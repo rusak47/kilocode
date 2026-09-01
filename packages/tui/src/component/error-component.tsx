@@ -1,4 +1,5 @@
 import { release } from "node:os"
+import { writeSync } from "node:fs"
 import { TextAttributes, type ScrollBoxRenderable } from "@opentui/core"
 import { useKeyboard, useTerminalDimensions } from "@opentui/solid"
 import { createSignal, For, Show } from "solid-js"
@@ -19,6 +20,20 @@ function tryUseTerminalDimensions() {
 // kilocode_change end
 
 export function ErrorComponent(props: { error: Error; reset: () => void; mode?: "dark" | "light" }) {
+  if (process.env.KILO_DEBUG_EVENTS) {
+    writeSync(
+      1,
+      "[TUI error component init] " +
+        JSON.stringify({
+          name: props.error?.name,
+          message: props.error?.message,
+          stack: props.error?.stack,
+          cols: process.stdout.columns,
+          rows: process.stdout.rows,
+        }) +
+        "\n",
+    )
+  }
   // kilocode_change start — guard against missing renderer context in ErrorBoundary fallback
   const term = tryUseTerminalDimensions()
   const width = () => term?.().width ?? process.stdout.columns ?? 80
@@ -118,106 +133,126 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
   const showSubtext = () => height() >= 18
   const showFooter = () => height() >= 20
 
-  return (
-    <box width={width()} height={height()} backgroundColor={colors.bg} flexDirection="column" alignItems="center">
-      <box width={contentWidth()} flexGrow={1} flexDirection="column" paddingTop={1} paddingBottom={1} gap={1}>
-        {/* Headline */}
-        <box flexDirection="column" alignItems="center" flexShrink={0}>
-          <text attributes={TextAttributes.BOLD} fg={colors.text}>
-            {/* kilocode_change */}
-            Kilo crashed
-          </text>
-          <Show when={showSubtext()}>
-            <text fg={colors.muted}>An unexpected error stopped the session.</text>
+  try {
+    return (
+      <box width={width()} height={height()} backgroundColor={colors.bg} flexDirection="column" alignItems="center">
+        <box width={contentWidth()} flexGrow={1} flexDirection="column" paddingTop={1} paddingBottom={1} gap={1}>
+          {/* Headline */}
+          <box flexDirection="column" alignItems="center" flexShrink={0}>
+            <text attributes={TextAttributes.BOLD} fg={colors.text}>
+              {/* kilocode_change */}
+              Kilo crashed
+            </text>
+            <Show when={showSubtext()}>
+              <text fg={colors.muted}>An unexpected error stopped the session.</text>
+            </Show>
+          </box>
+
+          {/* Error message panel */}
+          <box
+            flexShrink={0}
+            border
+            borderStyle="rounded"
+            borderColor={colors.error}
+            title=" Error "
+            titleColor={colors.error}
+            paddingLeft={2}
+            paddingRight={2}
+          >
+            <text fg={colors.text}>{message}</text>
+          </box>
+
+          {/* Actions */}
+          <box flexDirection="row" flexWrap="wrap" justifyContent="center" gap={2} rowGap={1} flexShrink={0}>
+            <For each={actions}>
+              {(action, index) => {
+                const isSelected = () => selected() === index()
+                const isCopied = () => action.copy && copied()
+                return (
+                  <box flexDirection="column" alignItems="center" flexShrink={0}>
+                    <box
+                      onMouseDown={() => setSelected(index())}
+                      onMouseUp={() => action.onUse()}
+                      backgroundColor={isCopied() ? colors.success : isSelected() ? colors.primary : colors.element}
+                      minWidth={15}
+                      alignItems="center"
+                      paddingLeft={2}
+                      paddingRight={2}
+                    >
+                      <text
+                        attributes={TextAttributes.BOLD}
+                        fg={isCopied() || isSelected() ? colors.onPrimary : colors.text}
+                      >
+                        {action.label()}
+                      </text>
+                    </box>
+                    <text fg={isSelected() ? colors.primary : colors.muted}>{action.key}</text>
+                  </box>
+                )
+              }}
+            </For>
+          </box>
+
+          {/* Stack trace */}
+          <box
+            flexGrow={1}
+            flexBasis={0}
+            minHeight={3}
+            border
+            borderStyle="rounded"
+            borderColor={colors.borderSubtle}
+            title=" Stack trace "
+            titleColor={colors.muted}
+            bottomTitle=" ↑↓ scroll "
+            bottomTitleAlignment="right"
+            paddingLeft={1}
+            paddingRight={1}
+          >
+            <scrollbox
+              ref={(element: ScrollBoxRenderable) => (scroll = element)}
+              flexGrow={1}
+              scrollAcceleration={getScrollAcceleration()}
+            >
+              <text fg={colors.muted}>{stack}</text>
+            </scrollbox>
+          </box>
+
+          {/* Footer */}
+          <Show when={showFooter()}>
+            <box flexDirection="column" alignItems="center" flexShrink={0}>
+              <text fg={colors.muted}>
+                {copied()
+                  ? "Report copied — paste it into a new GitHub issue."
+                  : "Copy the report and open a GitHub issue to help us fix this."}
+              </text>
+              <text fg={colors.muted}>
+                {/* kilocode_change */}
+                Kilo {InstallationVersion}
+              </text>
+            </box>
           </Show>
         </box>
-
-        {/* Error message panel */}
-        <box
-          flexShrink={0}
-          border
-          borderStyle="rounded"
-          borderColor={colors.error}
-          title=" Error "
-          titleColor={colors.error}
-          paddingLeft={2}
-          paddingRight={2}
-        >
-          <text fg={colors.text}>{message}</text>
-        </box>
-
-        {/* Actions */}
-        <box flexDirection="row" flexWrap="wrap" justifyContent="center" gap={2} rowGap={1} flexShrink={0}>
-          <For each={actions}>
-            {(action, index) => {
-              const isSelected = () => selected() === index()
-              const isCopied = () => action.copy && copied()
-              return (
-                <box flexDirection="column" alignItems="center" flexShrink={0}>
-                  <box
-                    onMouseDown={() => setSelected(index())}
-                    onMouseUp={() => action.onUse()}
-                    backgroundColor={isCopied() ? colors.success : isSelected() ? colors.primary : colors.element}
-                    minWidth={15}
-                    alignItems="center"
-                    paddingLeft={2}
-                    paddingRight={2}
-                  >
-                    <text
-                      attributes={TextAttributes.BOLD}
-                      fg={isCopied() || isSelected() ? colors.onPrimary : colors.text}
-                    >
-                      {action.label()}
-                    </text>
-                  </box>
-                  <text fg={isSelected() ? colors.primary : colors.muted}>{action.key}</text>
-                </box>
-              )
-            }}
-          </For>
-        </box>
-
-        {/* Stack trace */}
-        <box
-          flexGrow={1}
-          flexBasis={0}
-          minHeight={3}
-          border
-          borderStyle="rounded"
-          borderColor={colors.borderSubtle}
-          title=" Stack trace "
-          titleColor={colors.muted}
-          bottomTitle=" ↑↓ scroll "
-          bottomTitleAlignment="right"
-          paddingLeft={1}
-          paddingRight={1}
-        >
-          <scrollbox
-            ref={(element: ScrollBoxRenderable) => (scroll = element)}
-            flexGrow={1}
-            scrollAcceleration={getScrollAcceleration()}
-          >
-            <text fg={colors.muted}>{stack}</text>
-          </scrollbox>
-        </box>
-
-        {/* Footer */}
-        <Show when={showFooter()}>
-          <box flexDirection="column" alignItems="center" flexShrink={0}>
-            <text fg={colors.muted}>
-              {copied()
-                ? "Report copied — paste it into a new GitHub issue."
-                : "Copy the report and open a GitHub issue to help us fix this."}
-            </text>
-            <text fg={colors.muted}>
-              {/* kilocode_change */}
-              Kilo {InstallationVersion}
-            </text>
-          </box>
-        </Show>
       </box>
-    </box>
-  )
+    )
+  } catch (err) {
+    if (process.env.KILO_DEBUG_EVENTS) {
+      writeSync(
+        1,
+        "[TUI error component render failure] " +
+          JSON.stringify({
+            name: err instanceof Error ? err.name : typeof err,
+            message: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
+            width: width(),
+            height: height(),
+            cols: process.stdout.columns,
+            rows: process.stdout.rows,
+          }) +
+          "\n",
+      )
+    }
+    throw err
+  }
 }
 
 function buildIssueURL(message: string, stack: string) {
