@@ -11,7 +11,10 @@ import type { Meta, StoryObj } from "storybook-solidjs-vite"
 import type { AssistantMessage as SDKAssistantMessage, ReasoningPart, TextPart, ToolPart } from "@kilocode/sdk/v2"
 import { StoryProviders, defaultMockData, mockSessionValue } from "./StoryProviders"
 import { AssistantMessage } from "../components/chat/AssistantMessage"
-import { VscodeSessionTurn } from "../components/chat/VscodeSessionTurn"
+import { For } from "solid-js"
+import { TranscriptRowView } from "../components/chat/TranscriptRow"
+import { messageTurns } from "../context/session-queue"
+import { transcriptRows } from "../context/transcript-rows"
 import { ChatView } from "../components/chat/ChatView"
 import { Part } from "@kilocode/kilo-ui/message-part"
 import { registerVscodeToolOverrides } from "../components/chat/VscodeToolOverrides"
@@ -300,6 +303,22 @@ const dockPermission: PermissionRequest = {
   // No `tool` field — this is a non-tool (dock) permission
 }
 
+const skillShellPermission: PermissionRequest = {
+  id: "perm-skill-shell-001",
+  sessionID: SESSION_ID,
+  toolName: "bash",
+  // patterns are the decomposed sub-commands (for authorization); the prompt displays the
+  // verbatim per-placeholder commands from args.commands, and names the skill via args.skill.
+  patterns: ["git rev-parse --abbrev-ref HEAD", "printf INJECTED_OK"],
+  always: [],
+  args: {
+    skillShell: true,
+    skill: "git-status",
+    commands: ["git rev-parse --abbrev-ref HEAD", "printf INJECTED_OK"],
+  },
+  tool: { messageID: ASST_MSG_ID, callID: "call-skill-shell-001" },
+}
+
 // ---------------------------------------------------------------------------
 // Question fixtures
 // ---------------------------------------------------------------------------
@@ -551,6 +570,30 @@ export const BashWithPermission: Story = {
   name: "Permission Dock — bash above chatbox",
   render: () => {
     const perms = [bashPermission]
+    const session = {
+      ...mockSessionValue({ id: SESSION_ID, status: "busy", permissions: perms }),
+      messages: () => [{ id: "msg-001" }] as any[],
+    }
+    return (
+      <StoryProviders permissions={perms} sessionID={SESSION_ID} status="busy" noPadding>
+        <SessionContext.Provider value={session as any}>
+          <div style={{ width: "100%", height: "300px", display: "flex", "flex-direction": "column" }}>
+            <ChatView />
+          </div>
+        </SessionContext.Provider>
+      </StoryProviders>
+    )
+  },
+}
+
+// ---------------------------------------------------------------------------
+// 2b. Permission dock — skill shell batch (command list, Allow/Reject, no rules)
+// ---------------------------------------------------------------------------
+
+export const PermissionDockSkillShell: Story = {
+  name: "Permission Dock — skill shell commands",
+  render: () => {
+    const perms = [skillShellPermission]
     const session = {
       ...mockSessionValue({ id: SESSION_ID, status: "busy", permissions: perms }),
       messages: () => [{ id: "msg-001" }] as any[],
@@ -1340,20 +1383,28 @@ export const DiffSummaryCollapsed: Story = {
           {
             id: USER_MSG_ID,
             sessionID: SESSION_ID,
-            role: "user",
+            role: "user" as const,
+            createdAt: new Date(now - 10000).toISOString(),
             time: { created: now - 10000 },
             summary: { diffs: mockDiffs },
           },
-          { ...baseAssistantMessage, parentID: USER_MSG_ID },
+          { ...baseAssistantMessage, parentID: USER_MSG_ID, createdAt: new Date(now - 9000).toISOString() },
         ],
       },
       part: {
         [USER_MSG_ID]: [
-          { id: "part-user-text", sessionID: SESSION_ID, messageID: USER_MSG_ID, type: "text", text: "Fix the bug" },
+          {
+            id: "part-user-text",
+            sessionID: SESSION_ID,
+            messageID: USER_MSG_ID,
+            type: "text" as const,
+            text: "Fix the bug",
+          },
         ],
         [ASST_MSG_ID]: [textPart],
       },
     }
+    const parts = new Map(Object.entries(data.part))
     const session = {
       ...mockSessionValue({ id: SESSION_ID, status: "idle" }),
       messages: () => data.message[SESSION_ID],
@@ -1379,13 +1430,9 @@ export const DiffSummaryCollapsed: Story = {
         <ServerContext.Provider value={server as any}>
           <SessionContext.Provider value={session as any}>
             <div style={{ width: "380px", padding: "12px" }}>
-              <VscodeSessionTurn
-                turn={{
-                  id: USER_MSG_ID,
-                  user: data.message[SESSION_ID][0] as any,
-                  assistant: [data.message[SESSION_ID][1] as any],
-                }}
-              />
+              <For each={transcriptRows(messageTurns(data.message[SESSION_ID]), (id) => parts.get(id) ?? [])}>
+                {(row) => <TranscriptRowView row={row} />}
+              </For>
             </div>
           </SessionContext.Provider>
         </ServerContext.Provider>
