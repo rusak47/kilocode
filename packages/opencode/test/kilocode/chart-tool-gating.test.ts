@@ -6,13 +6,13 @@ import type * as Tool from "@/tool/tool"
 const stub = (id: string) => ({ id }) as unknown as Tool.Def
 
 const tools = {
-  codebase: stub("codebase"),
   recall: stub("recall"),
   managerModels: stub("managerModels"),
   memory: stub("memory"),
   save: stub("save"),
   manager: stub("manager"),
   process: stub("process"),
+  browser: stub("browser_open"),
   chart: stub("chart"),
   image: stub("image"),
   notify: stub("notify"),
@@ -40,4 +40,10 @@ test("chart tool is excluded for cli", () => {
 
 test("chart tool is excluded for jetbrains", () => {
   expect(ids("jetbrains")).not.toContain("chart")
+})
+
+test("browser tool is included only for vscode clients", () => {
+  expect(ids("vscode")).toContain("browser_open")
+  expect(ids("cli")).not.toContain("browser_open")
+  expect(ids("jetbrains")).not.toContain("browser_open")
 })

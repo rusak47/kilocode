@@ -21,6 +21,10 @@ import { useVSCode } from "../../src/context/vscode"
 import { useLanguage } from "../../src/context/language"
 import { formatReviewCommentsMarkdown } from "../../src/utils/review-comment-markdown"
 import type { ScriptTerminalStatus, TerminalFont } from "./state"
+import { createInputBuffer, createReplayGate, createWriteBatcher } from "./replay"
+import { registerTerminalOutput, unregisterTerminalOutput } from "./output"
+import { registerActivity } from "./activity"
+import type { Activity } from "../../src/utils/session-activity"
 
 interface Props {
   terminalId: string
@@ -30,13 +34,12 @@ interface Props {
   font: TerminalFont
   /** Whether this terminal is currently the focused tab.
    *
-   *  The xterm subtree always stays in the paint tree (see the layer /
-   *  slot CSS in `terminal/render.tsx` and `agent-manager.css`), so we
-   *  do NOT rely on this prop to rescue the canvas after a hypothetical
-   *  `display: none` detach — the layout is designed so that never
-   *  happens. It's used only to auto-focus on activation and to force
-   *  an xterm re-paint when the slot transitions back to visible after
-   *  sitting behind an occluding layer. */
+   *  Inactive slots are translated off-screen (see the layer / slot CSS
+   *  in `terminal/render.tsx` and `agent-manager.css`): xterm's render
+   *  observer pauses invisible terminals and resumes them with a full
+   *  refresh on activation. This prop drives that activation repaint
+   *  plus auto-focus on activation — xterm's own resume is primary, the
+   *  explicit fit + refresh here is insurance. */
   active: boolean
   /** Side terminals only repaint on activation; focus is restored explicitly
    *  when that context's remembered focus owner is the terminal. */
@@ -49,11 +52,15 @@ interface Props {
    *  layer tracks this as `focusedId` so `Cmd+W` can target the
    *  terminal that actually has the cursor. */
   onFocusChange?: (focused: boolean) => void
+  /** Handle the Agent Manager prompt shortcut locally because xterm's
+   *  textarea does not reliably forward custom commands to the workbench. */
+  onFocusPrompt?: () => void
   /** Reports OSC window-title escape codes (`ESC ] 0/1/2 ; title BEL`)
    *  sent by the shell or running programs — fish sets it to the active
    *  command, oh-my-zsh to user@host:cwd, vim to the file name. The
    *  state layer mirrors it into the tab label. */
   onTitleChange?: (title: string) => void
+  onActivityChange?: (state: Activity) => void
   /** Provider-owned script status (Run/Setup), used to annotate the
    *  output when a script ends in failure. */
   status?: () => ScriptTerminalStatus | undefined
@@ -130,7 +137,7 @@ function isAgentManagerShortcut(e: KeyboardEvent): boolean {
   const key = e.key.toLowerCase()
   if (e.altKey && ["arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) return true
   if (["t", "w", "n", "d", "e", "f"].includes(key)) return true
-  if (e.shiftKey && ["w", "n", "o", "r", "m", "/", "?"].includes(key)) return true
+  if (e.shiftKey && ["t", "w", "n", "o", "r", "m", "[", "]", "/", "?"].includes(key)) return true
   if (/^[1-9]$/.test(key)) return true
   if (key === "/") return true
   return false
@@ -148,8 +155,12 @@ export const TerminalTab: Component<Props> = (props) => {
 
   onMount(() => {
     const term = new Terminal({
-      convertEol: true,
+      // PTY output already contains terminal line endings. Converting LF to
+      // CRLF here corrupts raw PTY output and is especially visible when a
+      // narrow terminal wraps and redraws the prompt.
+      convertEol: false,
       cursorBlink: true,
+      cursorInactiveStyle: "outline",
       fontFamily: props.font.fontFamily,
       fontSize: props.font.fontSize,
       scrollback: 5000,
@@ -159,29 +170,45 @@ export const TerminalTab: Component<Props> = (props) => {
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(host)
-    // Fit on the next frame — `host` might still have 0px dimensions
-    // during the initial layout pass otherwise.
-    requestAnimationFrame(() => {
-      try {
-        fit.fit()
-      } catch (err) {
-        // Host still detached at mount time. ResizeObserver will retry
-        // once layout kicks in. Logged so regressions don't hide.
-        log("initial fit() threw", err)
-      }
+    // Keep xterm's DOM renderer. Every mounted WebGL addon owns a scarce
+    // browser context, including when xterm pauses an off-screen terminal.
+    // Chromium can evict a live renderer once enough Agent Manager terminals
+    // exist, and xterm 6.0's WebGL addon also has unresolved shared-atlas
+    // corruption. Frame batching below removes the per-message render churn
+    // without making terminal correctness depend on GPU resources.
+    registerTerminalOutput(props.terminalId, () => {
+      const buffer = term.buffer.active
+      return Array.from(
+        { length: buffer.length },
+        (_, index) => buffer.getLine(index)?.translateToString(true) ?? "",
+      ).join("\n")
     })
+    // Unicode width must be configured before the first PTY bytes are parsed.
+    // Loading it later can leave already-wrapped graphemes with stale cell
+    // widths, which moves the cursor in narrow terminals.
+    term.loadAddon(new UnicodeGraphemesAddon())
+    term.unicode.activeVersion = "15-graphemes"
 
-    // Pass agent-manager hotkeys through to the parent key handler so
-    // ⌘T / ⌘W / ⌘⌥← etc. still work while the terminal is focused.
-    term.attachCustomKeyEventHandler((event) => !isAgentManagerShortcut(event))
+    // Pass Agent Manager hotkeys through to the parent key handler so
+    // ⌘T / ⌘W / terminal cycling / ⌘⌥← still work while focused.
+    term.attachCustomKeyEventHandler((event) => {
+      const prompt =
+        (event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === "m"
+      if (prompt) {
+        if (event.type === "keydown") props.onFocusPrompt?.()
+        return false
+      }
+      return !isAgentManagerShortcut(event)
+    })
 
     // Track DOM focus so the state layer knows which terminal holds the
     // cursor (drives Cmd+W targeting). focusout is ignored when focus
     // moves within the same host (xterm shuffles inner nodes).
-    const onFocusIn = () => props.onFocusChange?.(true)
+    const reportFocus = () => props.onFocusChange?.(host.contains(document.activeElement))
+    const onFocusIn = () => queueMicrotask(reportFocus)
     const onFocusOut = (event: FocusEvent) => {
       if (event.relatedTarget instanceof Node && host.contains(event.relatedTarget)) return
-      props.onFocusChange?.(false)
+      queueMicrotask(reportFocus)
     }
     host.addEventListener("focusin", onFocusIn)
     host.addEventListener("focusout", onFocusOut)
@@ -192,15 +219,21 @@ export const TerminalTab: Component<Props> = (props) => {
 
     let ws: WebSocket | undefined
     let closed = false
-    let pending = ""
+    const input = createInputBuffer()
+    let user = false
     let restartRequested = false
     let disconnected = false
     let readyTimer: ReturnType<typeof setTimeout> | undefined
     let fallbackTimer: ReturnType<typeof setTimeout> | undefined
     let streamed = false
     let socketEnded = false
+    const activity = registerActivity(term.parser, (state) => {
+      props.onActivityChange?.(closed || socketEnded ? "idle" : state)
+    })
     let frame: number | undefined
     let deferred: number | undefined
+    const batcher = createWriteBatcher((data, callback) => term.write(data, callback))
+    const writeLine = (data: string) => batcher.write(`${data}\r\n`)
     // The failure line must not depend on event ordering: the stream can
     // close before the exited snapshot lands (fast failures), or stay open
     // when a background child outlives the script. Write it exactly once,
@@ -212,12 +245,12 @@ export const TerminalTab: Component<Props> = (props) => {
       if (status?.kind !== "setup") return
       if (status.state === "failed") {
         failureWritten = true
-        term.writeln(`\r\n\x1b[31m[${t("agentManager.terminal.setupFailed")}]\x1b[0m`)
+        writeLine(`\r\n\x1b[31m[${t("agentManager.terminal.setupFailed")}]\x1b[0m`)
         return
       }
       if (status.state === "exited" && status.exitCode !== 0) {
         failureWritten = true
-        term.writeln(`\r\n\x1b[31m[${t("agentManager.terminal.setupFailedCode")} ${status.exitCode ?? "?"}]\x1b[0m`)
+        writeLine(`\r\n\x1b[31m[${t("agentManager.terminal.setupFailedCode")} ${status.exitCode ?? "?"}]\x1b[0m`)
       }
     }
     createEffect(() => {
@@ -234,11 +267,18 @@ export const TerminalTab: Component<Props> = (props) => {
         rows: term.rows,
       })
     }
+    const markUser = () => {
+      user = true
+      queueMicrotask(() => {
+        user = false
+      })
+    }
     const send = (data: string) => {
-      if (disconnected && props.restartable) {
-        pending += data
-        if (pending.length > 256 * 1024) pending = pending.slice(-256 * 1024)
-        requestRestart()
+      const reply = replay.draining() && !user
+      user = false
+      if (props.restartable && (replay.blocked() || disconnected || ws?.readyState !== WebSocket.OPEN)) {
+        input.add(data, reply)
+        if (disconnected) requestRestart()
         return
       }
       if (ws?.readyState === WebSocket.OPEN) {
@@ -246,7 +286,7 @@ export const TerminalTab: Component<Props> = (props) => {
         return
       }
     }
-    const flush = () => {
+    const flush = (all = false) => {
       if (ws?.readyState !== WebSocket.OPEN) return
       if (readyTimer) {
         clearTimeout(readyTimer)
@@ -256,9 +296,8 @@ export const TerminalTab: Component<Props> = (props) => {
         clearTimeout(fallbackTimer)
         fallbackTimer = undefined
       }
-      const data = pending
-      pending = ""
-      if (data && /[^\r\n]/.test(data)) ws.send(data)
+      const data = input.take()
+      if (data && (all || /[^\r\n]/.test(data))) ws.send(data)
       disconnected = false
       restartRequested = false
     }
@@ -270,8 +309,18 @@ export const TerminalTab: Component<Props> = (props) => {
         flush()
       }, 100)
     }
+    const replay = createReplayGate({
+      write: (data, callback) => batcher.write(data, callback),
+      flush: () => flush(true),
+    })
+    const disposeKey = term.onKey(markUser)
+    for (const event of ["input", "paste", "compositionend", "mousedown", "wheel"]) {
+      host.addEventListener(event, markUser, true)
+    }
     const open = (url: string) => {
       if (closed || !url) return
+      if (ws && ws.readyState !== WebSocket.CLOSING && ws.readyState !== WebSocket.CLOSED) return
+      replay.attach(disconnected)
       const next = new WebSocket(url)
       next.binaryType = "arraybuffer"
       ws = next
@@ -289,20 +338,28 @@ export const TerminalTab: Component<Props> = (props) => {
         if (closed || ws !== next) return
         streamed = true
         if (typeof event.data === "string") {
-          term.write(event.data)
+          if (!replay.output(event.data)) {
+            input.clear()
+            next.close(4009, "terminal replay exceeded limit")
+            return
+          }
           scheduleFlush()
           return
         }
         if (event.data instanceof ArrayBuffer) {
           const bytes = new Uint8Array(event.data)
-          if (bytes.length > 0 && bytes[0] === 0x00) return
-          term.write(bytes)
+          if (replay.frame(bytes)) return
+          if (!replay.output(bytes)) {
+            input.clear()
+            next.close(4009, "terminal replay exceeded limit")
+            return
+          }
           scheduleFlush()
         }
       }
       next.onerror = () => {
         if (closed || ws !== next) return
-        term.writeln(`\r\n\x1b[90m[${t("agentManager.terminal.connectionError")}]\x1b[0m`)
+        writeLine(`\r\n\x1b[90m[${t("agentManager.terminal.connectionError")}]\x1b[0m`)
       }
       next.onclose = () => {
         if (closed || ws !== next) return
@@ -316,21 +373,21 @@ export const TerminalTab: Component<Props> = (props) => {
           fallbackTimer = undefined
         }
         socketEnded = true
+        activity.clear()
         noteFailure()
         if (props.restartable) {
           disconnected = true
           restartRequested = false
         }
         const key = props.restartable ? "agentManager.terminal.endedRestartable" : "agentManager.terminal.ended"
-        term.writeln(`\r\n\x1b[90m[${t(key)}]\x1b[0m`)
+        writeLine(`\r\n\x1b[90m[${t(key)}]\x1b[0m`)
       }
     }
     const disposeData = term.onData(send)
-    open(props.wsUrl)
-
+    const disposeBinary = term.onBinary(send)
     // These addons are not needed to paint the initial prompt. Defer them
-    // until after the first frame so their startup work, especially the
-    // Unicode 15 width tables, does not delay the shell connection.
+    // until after the first frame so their startup work does not delay the
+    // shell connection.
     const loadAddons = () => {
       deferred = undefined
       if (closed) return
@@ -345,30 +402,24 @@ export const TerminalTab: Component<Props> = (props) => {
       )
       // OSC 52 clipboard support for shell programs such as tmux and neovim.
       term.loadAddon(new ClipboardAddon())
-      // Use grapheme-aware width tables for newer emoji and ZWJ sequences.
-      term.loadAddon(new UnicodeGraphemesAddon())
-      term.unicode.activeVersion = "15-graphemes"
       term.refresh(0, Math.max(0, term.rows - 1))
     }
-    frame = requestAnimationFrame(() => {
-      frame = undefined
-      deferred = requestAnimationFrame(loadAddons)
-    })
-
     const restarted = (url: string) => {
       open(url)
     }
 
-    // Resize: fit on any host size change and forward new cols/rows to
-    // the backend PTY. Debounced because a user drag can fire dozens of
-    // resize events per second.
+    // Resize the visible terminal and forward new cols/rows to the backend
+    // PTY. Hidden terminals refit when activated, avoiding scrollback reflow
+    // for every mounted terminal during an inspector drag.
     let resizeTimer: ReturnType<typeof setTimeout> | undefined
     let lastCols = term.cols
     let lastRows = term.rows
-    const syncSize = () => {
-      if (term.cols === lastCols && term.rows === lastRows) return
+    let synced = false
+    const syncSize = (force = false) => {
+      if (!force && synced && term.cols === lastCols && term.rows === lastRows) return
       lastCols = term.cols
       lastRows = term.rows
+      synced = true
       vscode.postMessage({
         type: "agentManager.terminal.resize",
         terminalId: props.terminalId,
@@ -376,7 +427,18 @@ export const TerminalTab: Component<Props> = (props) => {
         rows: term.rows,
       })
     }
+    const fitNow = () => {
+      try {
+        fit.fit()
+        if (props.active) syncSize(true)
+      } catch (err) {
+        // Host still detached at mount time. ResizeObserver will retry
+        // once layout kicks in. Logged so regressions don't hide.
+        log("fit() threw", err)
+      }
+    }
     const ro = new ResizeObserver(() => {
+      if (!props.active) return
       try {
         fit.fit()
       } catch (err) {
@@ -386,29 +448,37 @@ export const TerminalTab: Component<Props> = (props) => {
         return
       }
       clearTimeout(resizeTimer)
-      if (readyTimer) clearTimeout(readyTimer)
-      if (fallbackTimer) clearTimeout(fallbackTimer)
       resizeTimer = setTimeout(syncSize, RESIZE_DEBOUNCE_MS)
     })
     ro.observe(host)
+    // Wait for the first committed layout before attaching the socket. This
+    // prevents the shell from emitting its first prompt at xterm's default
+    // 80 columns, which is most visible in a narrow side panel.
+    frame = requestAnimationFrame(() => {
+      frame = undefined
+      if (closed) return
+      fitNow()
+      if (!ws) open(props.wsUrl)
+      deferred = requestAnimationFrame(loadAddons)
+    })
 
     // ---- Repaint recovery ----
     //
-    // Every xterm canvas stays mounted in the paint tree (stacking CSS
-    // guarantees this), but browsers still deprioritise canvases that
-    // aren't visibly contributing pixels: after another terminal is
-    // opened on top, or after the window loses focus, the canvas keeps
-    // its last painted bitmap frozen while xterm's internal buffer goes
-    // on updating. When we flip the slot back to opacity:1 the canvas
-    // shows that stale frame until something kicks xterm's render loop
-    // — historically "press Enter to wake it up". Forcing a
-    // `fit + refresh(0, rows-1)` once per activation reclaims the paint
-    // priority; from then on the browser keeps the canvas live.
+    // Inactive xterm slots slide off-screen with their layout box
+    // intact, so their canvases are not composed while hidden but
+    // FitAddon keeps measuring. xterm's render observer pauses hidden
+    // terminals and replays a full refresh when they slide back in, but
+    // browsers still defer some canvas/render work: forcing a
+    // `fit + refresh(0, rows-1)` once per activation reclaims paint
+    // priority immediately; from then on the renderer keeps the canvas
+    // live. Historically the missing insurance step here was "press
+    // Enter to wake it up".
     //
     // Focus is opt-in per repaint (`shouldFocus`): repaints triggered by
     // resizes or font changes must not yank the cursor out of the chat
     // input, only explicit activation / focus requests may.
     let pendingFrame: number | null = null
+    let repaintTimer: ReturnType<typeof setTimeout> | undefined
     let shouldFocus = false
     const isRenderable = () => {
       if (!host.isConnected) return false
@@ -417,11 +487,13 @@ export const TerminalTab: Component<Props> = (props) => {
     }
     const runRepaint = () => {
       pendingFrame = null
+      clearTimeout(repaintTimer)
+      repaintTimer = undefined
       if (!props.active) return
       if (!isRenderable()) return
       try {
         fit.fit()
-        syncSize()
+        syncSize(!synced)
       } catch (err) {
         // Layout not settled yet; ResizeObserver retries on next change.
         log("repaint fit() threw", err)
@@ -434,18 +506,37 @@ export const TerminalTab: Component<Props> = (props) => {
       shouldFocus ||= focus
       if (pendingFrame !== null) return
       pendingFrame = requestAnimationFrame(runRepaint)
+      repaintTimer = setTimeout(() => {
+        if (pendingFrame === null) return
+        cancelAnimationFrame(pendingFrame)
+        runRepaint()
+      }, 250)
     }
     const fontSub = vscode.onMessage((message) => {
       if (message.type === "appendReviewCommentsToTerminal") {
         if (message.targetTerminalId !== props.terminalId) return
         const comments = message.comments
         if (!Array.isArray(comments) || comments.length === 0) return
+        markUser()
         term.paste(`${formatReviewCommentsMarkdown(comments)}\n`)
         return
       }
 
       if (message.type === "agentManager.terminal.restarted") {
         if (message.terminalId === props.terminalId) restarted(message.wsUrl)
+        return
+      }
+
+      if (message.type === "agentManager.terminal.created") {
+        if (message.terminalId === props.terminalId && !ws) {
+          term.options.fontFamily = message.font.fontFamily
+          term.options.fontSize = message.font.fontSize
+          // Optimistic side terminals can fit before their backend PTY exists;
+          // force the first resize again once the created response arrives.
+          fitNow()
+          scheduleRepaint()
+          open(message.wsUrl)
+        }
         return
       }
 
@@ -479,8 +570,14 @@ export const TerminalTab: Component<Props> = (props) => {
     createEffect(() => {
       const now = props.active
       const serial = props.focusSerial ?? 0
-      if (now && (!wasActive || serial !== focusSerial))
-        scheduleRepaint((serial > 0 && serial !== focusSerial) || props.focusOnActivate !== false)
+      if (now && (!wasActive || serial !== focusSerial)) {
+        const focus = (serial > 0 && serial !== focusSerial) || props.focusOnActivate !== false
+        // xterm creates its textarea synchronously in term.open(). Focus it
+        // now so a freshly revealed terminal accepts input in this event
+        // turn; the queued repaint below still refits and retries next frame.
+        if (focus && document.hasFocus()) term.focus()
+        scheduleRepaint(focus)
+      }
       if (!now && wasActive) term.blur()
       wasActive = now
       focusSerial = serial
@@ -496,12 +593,12 @@ export const TerminalTab: Component<Props> = (props) => {
     const ownsFocus = () => host.contains(document.activeElement)
     const onVisibilityChange = () => {
       if (document.hidden) return
-      if (!props.active || !ownsFocus()) return
-      scheduleRepaint(true)
+      if (!props.active) return
+      scheduleRepaint(ownsFocus())
     }
     const onWindowFocus = () => {
-      if (!props.active || !ownsFocus()) return
-      scheduleRepaint(true)
+      if (!props.active) return
+      scheduleRepaint(ownsFocus())
     }
     document.addEventListener("visibilitychange", onVisibilityChange)
     window.addEventListener("focus", onWindowFocus)
@@ -521,18 +618,30 @@ export const TerminalTab: Component<Props> = (props) => {
 
     onCleanup(() => {
       closed = true
+      activity.dispose()
+      batcher.cancel()
+      replay.cancel()
+      unregisterTerminalOutput(props.terminalId)
       if (pendingFrame !== null) cancelAnimationFrame(pendingFrame)
+      clearTimeout(repaintTimer)
       if (frame !== undefined) cancelAnimationFrame(frame)
       if (deferred !== undefined) cancelAnimationFrame(deferred)
       document.removeEventListener("visibilitychange", onVisibilityChange)
       window.removeEventListener("focus", onWindowFocus)
       host.removeEventListener("focusin", onFocusIn)
       host.removeEventListener("focusout", onFocusOut)
+      for (const event of ["input", "paste", "compositionend", "mousedown", "wheel"]) {
+        host.removeEventListener(event, markUser, true)
+      }
+      disposeKey.dispose()
       fontSub()
       themeObserver.disconnect()
       clearTimeout(resizeTimer)
+      clearTimeout(readyTimer)
+      clearTimeout(fallbackTimer)
       ro.disconnect()
       disposeData.dispose()
+      disposeBinary.dispose()
       disposeTitle.dispose()
       try {
         ws?.close()
