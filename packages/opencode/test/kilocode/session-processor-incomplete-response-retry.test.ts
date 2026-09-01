@@ -519,6 +519,36 @@ describe("session processor incomplete response retry", () => {
     ),
   )
 
+  it.effect("retries when stepFinish has prompt-only tokens and unknown finish", () =>
+    provideTmpdirProject(
+      (dir) =>
+        Effect.gen(function* () {
+          const ctx = yield* setup(dir)
+          // Simulates network_error response: prompt tokens consumed but zero output
+          const promptOnlyUsage = new Usage({ inputTokens: 10, totalTokens: 10 })
+          const empty = new Usage({})
+          yield* ctx.test.reply(
+            LLMEvent.stepStart({ index: 0 }),
+            LLMEvent.stepFinish({ index: 0, reason: "unknown", usage: promptOnlyUsage }),
+            LLMEvent.finish({ reason: "unknown", usage: empty }),
+          )
+          yield* ctx.test.reply(...success())
+          const delay = spyOn(SessionRetry, "delay").mockReturnValue(0)
+
+          try {
+            expect(yield* ctx.handle.process(ctx.input)).toBe("continue")
+          } finally {
+            delay.mockRestore()
+          }
+
+          expect(yield* ctx.test.calls).toBe(2)
+          expect(ctx.handle.message.finish).toBe("stop")
+          expect(ctx.handle.message.tokens.input).toBe(10)
+        }),
+      { git: true },
+    ),
+  )
+
   it.effect("uses step finish instead of a conflicting final finish", () =>
     provideTmpdirProject(
       (dir) =>
