@@ -215,10 +215,13 @@ export const {
     function sessionListQuery(): { scope?: "project"; path?: string } {
       if (!kv.get("session_directory_filter_enabled", true)) return { scope: "project" }
       if (!project.data.instance.path.worktree || !project.data.instance.path.directory) return { scope: "project" }
+      const relative = path
+        .relative(path.resolve(project.data.instance.path.worktree), project.data.instance.path.directory)
+        .replaceAll("\\", "/")
+      // "." means directory equals worktree; sessions at worktree root have path=undefined,
+      // so pass undefined to match them instead of filtering by literal "."
       return {
-        path: path
-          .relative(path.resolve(project.data.instance.path.worktree), project.data.instance.path.directory)
-          .replaceAll("\\", "/"),
+        path: relative === "." ? undefined : relative,
       }
     }
 
@@ -985,7 +988,7 @@ export const {
           if (last.role === "user") return "working"
           return last.time.completed ? "idle" : "working"
         },
-        async sync(sessionID: string) {
+        async sync(sessionID: string, directory?: string) {
           if (fullSyncedSessions.has(sessionID)) return
           const syncing = syncingSessions.get(sessionID)
           if (syncing) return syncing
@@ -993,7 +996,7 @@ export const {
           hydratingSessions.set(sessionID, tracker)
           const task = (async () => {
             const [session, messages, todo, diff] = await Promise.all([
-              sdk.client.session.get({ sessionID }, { throwOnError: true }),
+              sdk.client.session.get({ sessionID, directory }, { throwOnError: true }),
               sdk.client.session.messages({ sessionID, limit: 100 }),
               sdk.client.session.todo({ sessionID }),
               sdk.client.session.diff({ sessionID }),
