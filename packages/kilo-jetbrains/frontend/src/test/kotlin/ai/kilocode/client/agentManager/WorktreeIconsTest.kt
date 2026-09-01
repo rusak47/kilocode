@@ -3,6 +3,7 @@ package ai.kilocode.client.agentManager
 import ai.kilocode.client.agentManager.worktree.WorktreeIcons
 import ai.kilocode.client.session.SessionActivityKind
 import ai.kilocode.client.session.SpinnerIcon
+import ai.kilocode.client.ui.PrIcons
 import ai.kilocode.client.ui.UiStyle
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.ui.AnimatedIcon
@@ -23,13 +24,15 @@ class WorktreeIconsTest : BasePlatformTestCase() {
 
     fun `test resting row icons carry the muted palette in both themes`() {
         for (name in listOf("worktreeBranch", "worktreeLock", "worktree-local")) {
-            // The secondary New UI greys, which are also what Label.infoForeground resolves to, so a
-            // resting glyph sits at the weight of the description line under it rather than the title.
-            val light = svg(name).replace("#818594", "GLYPH")
-            val dark = svg("${name}_dark").replace("#6F737A", "GLYPH")
+            // The tertiary New UI greys: a resting glyph only says what the checkout is, so it sits a
+            // step quieter than the secondary grey the description line under it uses.
+            val light = svg(name).replace("#A8ADBD", "GLYPH")
+            val dark = svg("${name}_dark").replace("#9DA0A8", "GLYPH")
 
             assertFalse("$name still uses a primary grey", light.contains("#6C707E"))
             assertFalse("${name}_dark still uses a primary grey", dark.contains("#CED0D6"))
+            assertFalse("$name still uses the secondary grey", light.contains("#818594"))
+            assertFalse("${name}_dark still uses the secondary grey", dark.contains("#6F737A"))
             // Recoloring must be the only difference: the loader animates between the two.
             assertEquals("$name geometry drifted from its dark variant", light, dark)
         }
@@ -76,12 +79,23 @@ class WorktreeIconsTest : BasePlatformTestCase() {
         assertSame(WorktreeIcons.local, WorktreeIcons.forRow(busy = false, current = true))
     }
 
-    fun `test errored session falls back to the resting glyph`() {
-        assertSame(WorktreeIcons.branch, WorktreeIcons.forRow(busy = false, kind = SessionActivityKind.ERROR))
-        assertSame(
-            WorktreeIcons.local,
-            WorktreeIcons.forRow(busy = false, kind = SessionActivityKind.ERROR, current = true),
-        )
+    fun `test errored session shows the error glyph over the resting one`() {
+        val error = SessionActivityKind.ERROR.icon()
+        assertSame(error, WorktreeIcons.forRow(busy = false, kind = SessionActivityKind.ERROR))
+        assertSame(error, WorktreeIcons.forRow(busy = false, kind = SessionActivityKind.ERROR, current = true))
+        assertSame(error, WorktreeIcons.forRow(busy = false, kind = SessionActivityKind.ERROR, locked = true))
+        // An operation on the row still outranks it.
+        assertSame(WorktreeIcons.spinner, WorktreeIcons.forRow(busy = true, kind = SessionActivityKind.ERROR))
+    }
+
+    fun `test pull request verdict glyphs are never tinted to the row text color`() {
+        // neutral() drives tinting, which would flatten these to the label foreground and lose the
+        // red/green/amber the whole indicator depends on.
+        assertFalse(WorktreeIcons.neutral(PrIcons.reviewApproved))
+        assertFalse(WorktreeIcons.neutral(PrIcons.reviewChanges))
+        assertFalse(WorktreeIcons.neutral(PrIcons.checksPassed))
+        assertFalse(WorktreeIcons.neutral(PrIcons.checksFailed))
+        assertFalse(WorktreeIcons.neutral(PrIcons.checksRunning))
     }
 
     fun `test activity outranks the resting glyph on the local row`() {

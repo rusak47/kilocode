@@ -9,6 +9,7 @@
 
 import type { SnapshotFileDiff } from "@kilocode/sdk/v2/client"
 import type { DiffImage } from "../diff/types"
+import type { BrowserElement } from "../services/browser-automation"
 import type { Worktree, ManagedSession, Section } from "./WorktreeStateManager"
 import type { WorktreeStats, LocalStats } from "./GitStatsPoller"
 import type { ApplyConflict } from "./GitOps"
@@ -19,6 +20,7 @@ import type { ProjectSnapshot } from "./project/contexts"
 import type { SidebarTarget } from "./project/route"
 import type { TerminalDestination } from "./terminal-destination"
 import type { ScriptTerminalView } from "./ScriptTerminalManager"
+import type { BrowserFeedbackData } from "../shared/browser-feedback"
 
 export type { TerminalFont }
 export type { ProjectSnapshot }
@@ -127,6 +129,11 @@ interface WorktreeStatsMessage {
   stats: WorktreeStats[]
 }
 
+interface WorktreeActivityMessage {
+  type: "agentManager.worktreeActivity"
+  active: string[]
+}
+
 interface LocalStatsMessage {
   type: "agentManager.localStats"
   /** Owning project; absent in single-project mode. */
@@ -169,6 +176,7 @@ interface StateMessage {
   activeTarget?: SidebarTarget
   terminalDestination?: TerminalDestination
   terminalFont?: TerminalFont
+  browserAutomation?: boolean
 }
 
 /** Project catalog pushed to the webview after registry or context changes. */
@@ -258,6 +266,9 @@ interface ScriptTerminalsMessage {
 interface ErrorOutMessage {
   type: "error"
   message: string
+  code?: string
+  projectId?: string
+  worktreeId?: string
 }
 
 interface SessionAddedMessage {
@@ -312,6 +323,7 @@ interface SendInitialMessage {
   agent?: string
   variant?: string
   files?: Array<{ mime: string; url: string }>
+  browserFeedback?: BrowserFeedbackData
 }
 
 interface BranchesMessage {
@@ -426,6 +438,7 @@ interface PRStatusOutMessage {
 
 interface PRErrorOutMessage {
   type: "agentManager.prError"
+  projectId?: string
   error: "gh_missing" | "gh_auth" | "fetch_failed"
 }
 
@@ -443,6 +456,43 @@ interface ActionOutMessage {
   action: string
 }
 
+interface BrowserStateMessage {
+  type: "agentManager.browserState"
+  browserId: string
+  projectId?: string
+  sessionId: string
+  navigation?: number
+  status: "starting" | "ready" | "loading" | "error" | "closed"
+  inspecting?: boolean
+  url?: string
+  title?: string
+  errors: number
+  logs?: string[]
+  error?: string
+  frameError?: string
+}
+
+interface BrowserInspectionMessage {
+  type: "agentManager.browserInspection"
+  error?: string
+  requestId: string
+  projectId?: string
+  sessionId: string
+  url?: string
+  title?: string
+  element?: BrowserElement
+  logs: string[]
+  hover?: boolean
+}
+
+interface BrowserDevtoolsMessage {
+  type: "agentManager.browserDevtools"
+  browserId: string
+  projectId?: string
+  sessionId: string
+  url: string
+}
+
 interface RunStatusMessage extends RunStatus {
   type: "agentManager.runStatus"
   /** Owning project for this status. Absent in legacy single-project mode. */
@@ -451,6 +501,7 @@ interface RunStatusMessage extends RunStatus {
 
 /** All messages the Agent Manager extension sends to the webview. */
 export type AgentManagerOutMessage =
+  | WorktreeActivityMessage
   | WorktreeStatsMessage
   | LocalStatsMessage
   | WorktreeSetupMessage
@@ -481,6 +532,9 @@ export type AgentManagerOutMessage =
   | PRErrorOutMessage
   | CommentActionResultMessage
   | ActionOutMessage
+  | BrowserStateMessage
+  | BrowserInspectionMessage
+  | BrowserDevtoolsMessage
   | RunStatusMessage
   | TerminalCreatedMessage
   | TerminalRestartedMessage
@@ -905,6 +959,7 @@ interface SendMessageIn {
   files?: Array<{ mime: string; url: string; filename?: string; source?: FileSourceIn }>
   agentManagerContext?: string
   contextDirectory?: string
+  browserFeedback?: BrowserFeedbackData
 }
 
 interface SendCommandIn {
@@ -975,6 +1030,7 @@ interface ForkSessionIn {
 interface AbortIn {
   type: "abort"
   sessionID: string
+  scope?: "session" | "tree"
 }
 
 interface ContinueInWorktreeIn {
@@ -1074,6 +1130,28 @@ interface TerminalDestinationSelectedIn {
   destination: TerminalDestination
 }
 
+interface BrowserRequestIn {
+  type:
+    | "agentManager.browser.open"
+    | "agentManager.browser.refresh"
+    | "agentManager.browser.close"
+    | "agentManager.browser.state"
+    | "agentManager.browser.inspect"
+    | "agentManager.browser.input"
+    | "agentManager.browser.devtools"
+  sessionId: string
+  requestId?: string
+  projectId?: string
+  url?: string
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  hover?: boolean
+  click?: boolean
+  theme?: "dark" | "light"
+}
+
 /** All messages the Agent Manager expects from the webview (onMessage input). */
 export type AgentManagerInMessage =
   | CreateWorktreeIn
@@ -1161,3 +1239,4 @@ export type AgentManagerInMessage =
   | TerminalResizeIn
   | TerminalRestartIn
   | TerminalDestinationSelectedIn
+  | BrowserRequestIn

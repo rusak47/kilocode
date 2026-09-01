@@ -5,6 +5,7 @@ import ai.kilocode.rpc.dto.SessionActivityDto
 import ai.kilocode.rpc.dto.SessionActivityKindDto
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class WorktreeActivityTest {
     @Test
@@ -32,18 +33,44 @@ class WorktreeActivityTest {
     }
 
     @Test
-    fun `error outranks running but yields to interactive prompts`() {
-        val errorOverRunning = aggregateWorktreeActivity(mapOf(
+    fun `running outranks a sibling error but yields to interactive prompts`() {
+        val runningOverError = aggregateWorktreeActivity(mapOf(
             "ses_run" to SessionActivityDto("/repo/wt", SessionActivityKindDto.RUNNING),
             "ses_error" to SessionActivityDto("/repo/wt", SessionActivityKindDto.ERROR),
         ))
-        assertEquals(SessionActivityKind.ERROR, errorOverRunning["/repo/wt"])
+        assertEquals(SessionActivityKind.RUNNING, runningOverError["/repo/wt"])
 
         val questionOverError = aggregateWorktreeActivity(mapOf(
             "ses_error" to SessionActivityDto("/repo/wt", SessionActivityKindDto.ERROR),
             "ses_question" to SessionActivityDto("/repo/wt", SessionActivityKindDto.QUESTION),
         ))
         assertEquals(SessionActivityKind.QUESTION, questionOverError["/repo/wt"])
+    }
+
+    @Test
+    fun `attention ranks waiting sessions and ignores running work`() {
+        val kinds = mapOf(
+            "ses_run" to SessionActivityKind.RUNNING,
+            "ses_error" to SessionActivityKind.ERROR,
+            "ses_question" to SessionActivityKind.QUESTION,
+            "ses_permission" to SessionActivityKind.PERMISSION,
+        )
+
+        assertEquals(SessionActivityKind.PERMISSION, attention(kinds))
+        assertEquals(SessionActivityKind.QUESTION, attention(kinds, current = "ses_permission"))
+        assertNull(attention(mapOf("ses_run" to SessionActivityKind.RUNNING)))
+        assertNull(attention(emptyMap()))
+    }
+
+    @Test
+    fun `attention skips the current and deleting sessions`() {
+        val kinds = mapOf(
+            "ses_open" to SessionActivityKind.QUESTION,
+            "ses_gone" to SessionActivityKind.PERMISSION,
+        )
+
+        assertNull(attention(kinds, current = "ses_open", deleting = setOf("ses_gone")))
+        assertEquals(SessionActivityKind.QUESTION, attention(kinds, deleting = setOf("ses_gone")))
     }
 
     @Test

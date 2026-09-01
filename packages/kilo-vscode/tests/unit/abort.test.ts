@@ -15,31 +15,28 @@ function client(calls: unknown[], fail = false) {
 }
 
 describe("SessionAbort", () => {
-  it("stops the active owner and current mapped directory", async () => {
-    const calls: unknown[] = []
-    const aborts = new SessionAbort()
-    aborts.observe("session_1", "busy", "/repo")
+  it.each([undefined, "session", "tree"] as const)(
+    "stops the active owner and current mapped directory with %s scope",
+    async (scope) => {
+      const calls: unknown[] = []
+      const aborts = new SessionAbort()
+      aborts.observe("session_1", "busy", "/repo")
 
-    expect(await aborts.stop(client(calls), "session_1", "/repo/worktree")).toEqual({
-      complete: true,
-      attempts: [
-        { dir: "/repo", aborted: true },
-        { dir: "/repo/worktree", aborted: true },
-      ],
-    })
-    expect(calls).toEqual([
-      {
-        type: "abort",
-        params: { sessionID: "session_1", directory: "/repo" },
-        opts: { throwOnError: true },
-      },
-      {
-        type: "abort",
-        params: { sessionID: "session_1", directory: "/repo/worktree" },
-        opts: { throwOnError: true },
-      },
-    ])
-  })
+      expect(await aborts.stop(client(calls), "session_1", "/repo/worktree", undefined, scope)).toBe(true)
+      expect(calls).toEqual([
+        {
+          type: "abort",
+          params: { sessionID: "session_1", directory: "/repo", scope },
+          opts: { throwOnError: true },
+        },
+        {
+          type: "abort",
+          params: { sessionID: "session_1", directory: "/repo/worktree", scope },
+          opts: { throwOnError: true },
+        },
+      ])
+    },
+  )
 
   it("forgets an owner when its instance becomes idle", async () => {
     const calls: unknown[] = []
@@ -47,10 +44,7 @@ describe("SessionAbort", () => {
     aborts.observe("session_1", "busy", "/repo")
     aborts.observe("session_1", "idle", "/repo")
 
-    expect(await aborts.stop(client(calls), "session_1", "/repo/worktree")).toEqual({
-      complete: false,
-      attempts: [{ dir: "/repo/worktree", aborted: true }],
-    })
+    expect(await aborts.stop(client(calls), "session_1", "/repo/worktree")).toBe(false)
     expect(calls).toEqual([
       {
         type: "abort",
@@ -65,22 +59,8 @@ describe("SessionAbort", () => {
     const aborts = new SessionAbort()
     aborts.observe("session_1", "busy", "/repo/worktree")
 
-    expect(await aborts.stop(client(calls), "session_1", "/repo/worktree/.")).toEqual({
-      complete: true,
-      attempts: [{ dir: "/repo/worktree", aborted: true }],
-    })
+    expect(await aborts.stop(client(calls), "session_1", "/repo/worktree/.")).toBe(true)
     expect(calls).toHaveLength(1)
-  })
-
-  it("reports a failed HTTP abort separately from ownership", async () => {
-    const calls: unknown[] = []
-    const aborts = new SessionAbort()
-    aborts.observe("session_1", "busy", "/repo")
-
-    expect(await aborts.stop(client(calls, true), "session_1", "/repo")).toEqual({
-      complete: false,
-      attempts: [{ dir: "/repo", aborted: false }],
-    })
   })
 })
 

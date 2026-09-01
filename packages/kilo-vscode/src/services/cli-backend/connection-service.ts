@@ -14,7 +14,6 @@ type SSEEventFilter = (event: SSEPayload, directory?: string) => boolean
 type NotificationDismissListener = (notificationId: string) => void
 type LanguageChangeListener = (locale: string) => void
 type ProfileChangeListener = (data: unknown) => void
-type MigrationCompleteListener = () => void
 type FavoritesChangeListener = (favorites: Array<{ providerID: string; modelID: string }>) => void
 type ModelSelectorExpandedListener = (value: boolean) => void
 type ClearPendingPromptsListener = () => void
@@ -103,7 +102,6 @@ export class KiloConnectionService {
   private readonly notificationDismissListeners: Set<NotificationDismissListener> = new Set()
   private readonly languageChangeListeners: Set<LanguageChangeListener> = new Set()
   private readonly profileChangeListeners: Set<ProfileChangeListener> = new Set()
-  private readonly migrationCompleteListeners: Set<MigrationCompleteListener> = new Set()
   private readonly favoritesChangeListeners: Set<FavoritesChangeListener> = new Set()
   private readonly modelSelectorExpandedListeners: Set<ModelSelectorExpandedListener> = new Set()
   private readonly clearPendingPromptsListeners: Set<ClearPendingPromptsListener> = new Set()
@@ -133,7 +131,7 @@ export class KiloConnectionService {
   private viewedDirty = false
   private unsubRemote: (() => void) | null = null
 
-  constructor(context: vscode.ExtensionContext) {
+  constructor(context: vscode.ExtensionContext, env?: () => Promise<Record<string, string>>) {
     const state =
       context.workspaceState ??
       ({
@@ -141,7 +139,7 @@ export class KiloConnectionService {
         update: async () => undefined,
       } satisfies Pick<vscode.Memento, "get" | "update">)
     this.sandboxPreference = new SandboxPreference(state)
-    this.serverManager = new ServerManager(context, (code, signal) => this.handleServerExit(code, signal))
+    this.serverManager = new ServerManager(context, (code, signal) => this.handleServerExit(code, signal), env)
     this.active = vscode.window.state.focused
     this.windowStateDisposable = vscode.window.onDidChangeWindowState((ws) => {
       this.active = ws.focused
@@ -286,24 +284,17 @@ export class KiloConnectionService {
     }
   }
 
-  beginExplicitAbort(sessionID: string, directory: string): number | undefined {
-    return this.explicitAborts.begin(sessionID, directory)
-  }
-
-  finishExplicitAbort(sessionID: string, directory: string, id: number | undefined, stopped: boolean): void {
-    for (const item of this.explicitAborts.finish(sessionID, directory, id, stopped))
-      this.broadcastFiltered(item.event, item.directory)
-  }
-
   async runExplicitAbort<T>(sessionID: string, directory: string, action: () => Promise<T>): Promise<T> {
-    const id = this.beginExplicitAbort(sessionID, directory)
+    const id = this.explicitAborts.begin(sessionID, directory)
     return action().then(
       (result) => {
-        this.finishExplicitAbort(sessionID, directory, id, true)
+        this.explicitAborts.finish(sessionID, directory, id, true)
         return result
       },
       (error) => {
-        this.finishExplicitAbort(sessionID, directory, id, false)
+        for (const item of this.explicitAborts.finish(sessionID, directory, id, false)) {
+          this.broadcastFiltered(item.event, item.directory)
+        }
         throw error
       },
     )
@@ -473,25 +464,6 @@ export class KiloConnectionService {
   }
 
   /**
-   * Subscribe to migration-complete events broadcast from any KiloProvider. Returns unsubscribe function.
-   */
-  onMigrationComplete(listener: MigrationCompleteListener): () => void {
-    this.migrationCompleteListeners.add(listener)
-    return () => {
-      this.migrationCompleteListeners.delete(listener)
-    }
-  }
-
-  /**
-   * Broadcast a migration-complete event to all subscribed KiloProvider instances.
-   */
-  notifyMigrationComplete(): void {
-    for (const listener of this.migrationCompleteListeners) {
-      listener()
-    }
-  }
-
-  /**
    * Subscribe to favorites change events broadcast from any KiloProvider. Returns unsubscribe function.
    */
   onFavoritesChanged(listener: FavoritesChangeListener): () => void {
@@ -602,6 +574,7 @@ export class KiloConnectionService {
         for (const q of qs) {
           const { error } = await client.question.reject({ requestID: q.id, directory: dir })
           if (error && !isNotFound(error)) throw new Error(`Failed to reject question ${q.id}: ${String(error)}`)
+          this.clearQuestionDirectory(q.id)
         }
       }
     })
@@ -711,7 +684,6 @@ export class KiloConnectionService {
     this.stateListeners.clear()
     this.notificationDismissListeners.clear()
     this.profileChangeListeners.clear()
-    this.migrationCompleteListeners.clear()
     this.favoritesChangeListeners.clear()
     this.clearPendingPromptsListeners.clear()
     this.directoryProviders.clear()
