@@ -20,12 +20,12 @@ import ai.kilocode.rpc.dto.CommandDto
 import ai.kilocode.rpc.dto.CommandFileDto
 import ai.kilocode.rpc.dto.ConfigDto
 import ai.kilocode.rpc.dto.ConfigPatchDto
-import ai.kilocode.rpc.dto.ConfigUpdateDto
 import ai.kilocode.rpc.dto.CompactionConfigDto
 import ai.kilocode.rpc.dto.CustomModelDto
 import ai.kilocode.rpc.dto.CustomProviderConfigDto
 import ai.kilocode.rpc.dto.CustomProviderSaveDto
 import ai.kilocode.rpc.dto.DiffFileDto
+import ai.kilocode.rpc.dto.EditorContextDto
 import ai.kilocode.rpc.dto.MessageDto
 import ai.kilocode.rpc.dto.MessageErrorDto
 import ai.kilocode.rpc.dto.MessageSummaryDto
@@ -47,6 +47,7 @@ import ai.kilocode.rpc.dto.ModelTerminalBenchDto
 import ai.kilocode.rpc.dto.PartDto
 import ai.kilocode.rpc.dto.PartSourceDto
 import ai.kilocode.rpc.dto.PartSourceTextDto
+import ai.kilocode.rpc.dto.ToolApprovalDto
 import ai.kilocode.rpc.dto.PermissionAlwaysRulesDto
 import ai.kilocode.rpc.dto.PermissionFileDiffDto
 import ai.kilocode.rpc.dto.PermissionReplyDto
@@ -66,8 +67,11 @@ import ai.kilocode.rpc.dto.QuestionInfoDto
 import ai.kilocode.rpc.dto.QuestionOptionDto
 import ai.kilocode.rpc.dto.QuestionReplyDto
 import ai.kilocode.rpc.dto.QuestionRequestDto
+import ai.kilocode.rpc.dto.SessionChangeDto
+import ai.kilocode.rpc.dto.SessionChangeKindDto
 import ai.kilocode.rpc.dto.SessionDto
 import ai.kilocode.rpc.dto.SessionRevertDto
+import ai.kilocode.rpc.dto.SessionShareDto
 import ai.kilocode.rpc.dto.SessionStatusDto
 import ai.kilocode.rpc.dto.SessionSummaryDto
 import ai.kilocode.rpc.dto.SessionTimeDto
@@ -116,6 +120,7 @@ object KiloCliDataParser {
     private val READ_TOOL_LINE = Regex("^\\s*Called\\s+the\\s+Read\\s+tool\\s+with\\s+the\\s+following\\s+input:", RegexOption.IGNORE_CASE)
     private val READ_TOOL_PATH = Regex("\"(?:filePath|path)\"\\s*:")
     private val FIELD_RE = ConcurrentHashMap<String, Regex>()
+    private val APPROVAL_SOURCES = setOf("agent", "global", "project", "yolo", "session", "manual", "default")
 
     // ================================================================
     // SSE event parsing
@@ -370,6 +375,29 @@ object KiloCliDataParser {
         val id = props.str("sessionID") ?: return null
         val st = props["status"]?.jsonObject ?: return id to SessionStatusDto("idle")
         return id to parseStatus(st)
+    }
+
+    /**
+     * Parse an SSE `session.created` / `session.updated` / `session.deleted` event into a
+     * [SessionChangeDto]. All three carry the full session `info`, which is where the directory
+     * comes from. Returns null for any other type, or when there is no id or directory to act on.
+     */
+    fun parseSessionChange(type: String, data: String): SessionChangeDto? {
+        val kind = when (type) {
+            "session.created" -> SessionChangeKindDto.CREATED
+            "session.updated" -> SessionChangeKindDto.UPDATED
+            "session.deleted" -> SessionChangeKindDto.DELETED
+            else -> return null
+        }
+        val obj = tryParseObject(data) ?: return null
+        val payload = obj["payload"]?.jsonObject ?: obj
+        val props = payload["properties"]?.jsonObject ?: obj
+        val info = props["info"]?.jsonObject
+        val id = props.str("sessionID")?.takeIf { it.isNotBlank() }
+            ?: info?.str("id")?.takeIf { it.isNotBlank() }
+            ?: return null
+        val dir = info?.str("directory")?.takeIf { it.isNotBlank() } ?: return null
+        return SessionChangeDto(id, dir, kind)
     }
 
     // ================================================================
@@ -822,9 +850,26 @@ object KiloCliDataParser {
         if (variant != null) {
             sb.append(""","variant":${escape(variant)}""")
         }
+        val editor = prompt.editorContext
+        if (editor != null) {
+            sb.append(""","editorContext":${editorContextJson(editor)}""")
+        }
         sb.append("}")
         return sb.toString()
     }
+
+    private fun editorContextJson(ctx: EditorContextDto): String {
+        val fields = mutableListOf<String>()
+        ctx.directory?.let { fields += "\"directory\":${escape(it)}" }
+        ctx.worktree?.let { fields += "\"worktree\":${escape(it)}" }
+        ctx.visibleFiles?.takeIf { it.isNotEmpty() }?.let { fields += "\"visibleFiles\":${array(it)}" }
+        ctx.openTabs?.takeIf { it.isNotEmpty() }?.let { fields += "\"openTabs\":${array(it)}" }
+        ctx.activeFile?.let { fields += "\"activeFile\":${escape(it)}" }
+        ctx.shell?.let { fields += "\"shell\":${escape(it)}" }
+        return "{${fields.joinToString(",")}}"
+    }
+
+    private fun array(values: List<String>): String = values.joinToString(",", "[", "]") { escape(it) }
 
     private fun buildPromptPartJson(part: PromptPartDto): String {
         val fields = mutableListOf("\"type\":${escape(part.type)}")
@@ -867,31 +912,6 @@ object KiloCliDataParser {
         val parts = prompt.parts.filter { it.type == "file" }.joinToString(",") { buildPromptPartJson(it) }
         if (parts.isNotEmpty()) fields += "\"parts\":[$parts]"
         return "{${fields.joinToString(",")}}"
-    }
-
-    /**
-     * Build the partial JSON body for `PATCH /global/config`.
-     */
-    fun buildConfigPartial(update: ConfigUpdateDto): String {
-        val sb = StringBuilder("{")
-        var first = true
-        fun sep() { if (!first) sb.append(","); first = false }
-
-        val model = update.model
-        if (model != null) {
-            sep(); sb.append(""""model":${escape(model)}""")
-        }
-        val agent = update.agent
-        if (agent != null) {
-            sep(); sb.append(""""default_agent":${escape(agent)}""")
-        }
-        val temp = update.temperature
-        if (temp != null) {
-            val target = agent ?: "ask"
-            sep(); sb.append(""""agent":{"$target":{"temperature":$temp}}""")
-        }
-        sb.append("}")
-        return sb.toString()
     }
 
     fun buildConfigPatch(patch: ConfigPatchDto): String {
@@ -1096,6 +1116,7 @@ object KiloCliDataParser {
             parentID = obj.str("parentID"),
             cost = obj.num("cost"),
             tokens = tokens?.let(::parseTokens),
+            finish = obj.str("finish"),
             error = error?.let { parseError(it) },
             summary = summary,
         )
@@ -1130,6 +1151,9 @@ object KiloCliDataParser {
         val view = sequenceOf(topMeta?.get("view"), stateMeta?.get("view"))
             .mapNotNull(::parseTodoView)
             .firstOrNull()
+        val approval = sequenceOf(stateMeta?.get("approval"), topMeta?.get("approval"))
+            .mapNotNull(::parseToolApproval)
+            .firstOrNull()
         return PartDto(
             id = obj.str("id") ?: "",
             sessionID = obj.str("sessionID") ?: "",
@@ -1147,6 +1171,7 @@ object KiloCliDataParser {
             title = state?.str("title"),
             input = state.map("input"),
             metadata = meta,
+            approval = approval,
             output = state?.str("output"),
             error = state?.str("error"),
             time = obj.time("time") ?: state.time("time"),
@@ -1155,6 +1180,22 @@ object KiloCliDataParser {
             reason = obj.str("reason"),
             cost = obj.num("cost"),
             tokens = tokens?.let(::parseTokens),
+        )
+    }
+
+    private fun parseToolApproval(raw: JsonElement?): ToolApprovalDto? {
+        val obj = raw.obj() ?: return null
+        val source = obj.str("source") ?: return null
+        if (source !in APPROVAL_SOURCES) return null
+        val rule = obj["rule"].obj()
+        return ToolApprovalDto(
+            source = source,
+            agent = obj.str("agent"),
+            rulePermission = rule?.str("permission"),
+            rulePattern = rule?.str("pattern"),
+            ruleAction = rule?.str("action"),
+            outsideWorkspace = obj.flag("outsideWorkspace", false),
+            outsideWorkspacePath = obj.str("outsideWorkspacePath"),
         )
     }
 
@@ -1550,6 +1591,7 @@ object KiloCliDataParser {
                 )
             },
             revert = parseRevert(obj["revert"].obj()),
+            share = obj["share"].obj()?.str("url")?.takeIf { it.isNotBlank() }?.let(::SessionShareDto),
         )
     }
 

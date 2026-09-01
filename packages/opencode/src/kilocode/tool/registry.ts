@@ -1,8 +1,8 @@
-import { CodebaseSearchTool } from "../../tool/warpgrep"
 import { RecallTool } from "../../tool/recall"
 import { AgentManagerModelsTool } from "./agent-manager-models"
 import { AgentManagerTool } from "./agent-manager"
 import { BackgroundProcessTool } from "./background-process"
+import { BrowserOpenTool } from "./browser-open"
 import { ChartTool } from "./chart"
 import { GenerateImageTool } from "./generate-image"
 import { InteractiveTerminalTool } from "./interactive-terminal"
@@ -14,6 +14,7 @@ import { SendFileTool } from "./send-file"
 import * as Tool from "../../tool/tool"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Effect } from "effect"
+import * as Network from "@/kilocode/sandbox/network"
 import { Notebook } from "@/kilocode/notebook/service"
 import { AgentManager, HostError } from "@/kilocode/agent-manager/service"
 import { KiloSessions } from "@/kilo-sessions/kilo-sessions"
@@ -68,13 +69,13 @@ export namespace KiloToolRegistry {
 
   export function infos(host?: AgentManager.Interface, notebook?: Notebook.Interface) {
     return Effect.gen(function* () {
-      const codebase = yield* CodebaseSearchTool
       const recall = yield* RecallTool
       const managerModels = yield* AgentManagerModelsTool
       const memory = yield* MemoryRecallTool
       const save = yield* MemorySaveTool
       const manager = yield* AgentManagerTool.pipe(Effect.provideService(AgentManager.Service, host ?? unavailable))
       const process = yield* BackgroundProcessTool
+      const browser = Flag.KILO_CLIENT === "vscode" ? yield* BrowserOpenTool : undefined
       const chart = yield* ChartTool
       const image = yield* GenerateImageTool
       const terminal = yield* InteractiveTerminalTool
@@ -85,13 +86,27 @@ export namespace KiloToolRegistry {
       const notify = yield* NotifyUserTool.pipe(Effect.provideService(KiloSessions.Service, sessions))
       const send = yield* SendFileTool
       if (!notebook)
-        return { codebase, recall, managerModels, memory, save, manager, process, chart, image, terminal, notify, send }
+        return { recall, managerModels, memory, save, manager, process, browser, chart, image, terminal, notify, send }
       const tools = yield* Effect.all({
         notebookRead: NotebookReadTool,
         notebookEdit: NotebookEditTool,
         notebookExecute: NotebookExecuteTool,
       }).pipe(Effect.provideService(Notebook.Service, notebook))
-      return { codebase, recall, managerModels, memory, save, manager, process, chart, image, terminal, notify, send, ...tools }
+      return {
+        recall,
+        managerModels,
+        memory,
+        save,
+        manager,
+        process,
+        browser,
+        chart,
+        image,
+        terminal,
+        notify,
+        send,
+        ...tools,
+      }
     })
   }
 
@@ -99,13 +114,13 @@ export namespace KiloToolRegistry {
    * it has no Service deps beyond what Tool.init itself needs. */
   export function build(
     tools: {
-      codebase: Tool.Info
       recall: Tool.Info
       managerModels: Tool.Info
       memory: Tool.Info
       save: Tool.Info
       manager: Tool.Info
       process: Tool.Info
+      browser?: Tool.Info
       chart: Tool.Info
       image: Tool.Info
       terminal?: Tool.Info
@@ -120,7 +135,6 @@ export namespace KiloToolRegistry {
   ) {
     return Effect.gen(function* () {
       const base = yield* Effect.all({
-        codebase: Tool.init(tools.codebase),
         recall: Tool.init(tools.recall),
         managerModels: Tool.init(tools.managerModels),
         memory: Tool.init(tools.memory),
@@ -133,6 +147,7 @@ export namespace KiloToolRegistry {
         send: Tool.init(tools.send),
       })
       const terminal = tools.terminal ? yield* Tool.init(tools.terminal) : undefined
+      const browser = tools.browser ? yield* Tool.init(tools.browser) : undefined
       const notebooks =
         tools.notebookRead && tools.notebookEdit && tools.notebookExecute
           ? yield* Effect.all({
@@ -142,7 +157,7 @@ export namespace KiloToolRegistry {
             })
           : {}
       const semantic = yield* semanticTool(deps, loaders)
-      return { ...base, terminal, ...notebooks, semantic, notify: base.notify, send: base.send }
+      return { ...base, terminal, browser, ...notebooks, semantic, notify: base.notify, send: base.send }
     })
   }
 
@@ -194,7 +209,6 @@ export namespace KiloToolRegistry {
   /** Kilo-specific tools to append to the builtin list */
   export function extra(
     tools: {
-      codebase: Tool.Def
       semantic?: Tool.Def
       recall: Tool.Def
       managerModels: Tool.Def
@@ -202,6 +216,7 @@ export namespace KiloToolRegistry {
       save: Tool.Def
       manager: Tool.Def
       process: Tool.Def
+      browser?: Tool.Def
       chart: Tool.Def
       image: Tool.Def
       terminal?: Tool.Def
@@ -211,10 +226,11 @@ export namespace KiloToolRegistry {
       notebookEdit?: Tool.Def
       notebookExecute?: Tool.Def
     },
-    cfg: { experimental?: { codebase_search?: boolean; image_generation?: boolean; native_notebook_tools?: boolean } },
+    cfg: {
+      experimental?: { image_generation?: boolean; native_notebook_tools?: boolean; task_model_selection?: boolean }
+    },
   ): Tool.Def[] {
     return [
-      ...(cfg.experimental?.codebase_search === true ? [tools.codebase] : []),
       ...(cfg.experimental?.image_generation === true ? [tools.image] : []),
       ...(tools.semantic ? [tools.semantic] : []),
       tools.memory,
@@ -223,7 +239,11 @@ export namespace KiloToolRegistry {
       ...(Flag.KILO_CLIENT === "vscode" ? [tools.chart] : []),
       ...(Flag.KILO_CLIENT === "cli" || Flag.KILO_CLIENT === "vscode" ? [tools.process] : []),
       ...(Flag.KILO_CLIENT === "cli" && tools.terminal ? [tools.terminal] : []),
-      ...(Flag.KILO_CLIENT === "vscode" ? [tools.managerModels, tools.manager] : []),
+      ...(Flag.KILO_CLIENT === "vscode" || cfg.experimental?.task_model_selection === true
+        ? [tools.managerModels]
+        : []),
+      ...(Flag.KILO_CLIENT === "vscode" ? [tools.manager] : []),
+      ...(Flag.KILO_CLIENT === "vscode" && tools.browser ? [tools.browser] : []),
       ...(Flag.KILO_CLIENT === "vscode" &&
       cfg.experimental?.native_notebook_tools === true &&
       tools.notebookRead &&
@@ -278,8 +298,17 @@ export namespace KiloToolRegistry {
   export const applyVisibility = Effect.fn("KiloToolRegistry.applyVisibility")(function* (tools: Tool.Def[]) {
     const ctx = yield* InstanceState.context
     const memoryEnabled = yield* memoryToolsEnabled({ ctx })
+    const browser = tools.some((tool) => tool.id === "browser_open")
+      ? yield* Effect.gen(function* () {
+          const base = process.env.KILO_BROWSER_BROKER_URL
+          const token = process.env.KILO_BROWSER_BROKER_TOKEN
+          if (!base || !token || !URL.canParse(base)) return false
+          return yield* Network.available(new URL(base), token)
+        })
+      : false
     return tools.filter((tool) => {
       if (tool.id.startsWith("kilo_memory_")) return memoryEnabled
+      if (tool.id === "browser_open") return browser
       return true
     })
   })

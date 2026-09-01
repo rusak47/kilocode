@@ -42,6 +42,7 @@ import { SessionProcessor } from "@/session/processor"
 import { SessionPrompt } from "@/session/prompt"
 import { SessionRevert } from "@/session/revert"
 import { SessionRunState } from "@/session/run-state"
+import { SessionDrain } from "@/kilocode/session/drain" // kilocode_change
 import { Session } from "@/session/session"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
@@ -71,6 +72,7 @@ import { PermissionSaved } from "@opencode-ai/core/permission/saved"
 import { ProjectV2 } from "@opencode-ai/core/project"
 import { ProjectCopy } from "@opencode-ai/core/project/copy"
 import { PtyTicket } from "@opencode-ai/core/pty/ticket"
+import { Pty } from "@opencode-ai/core/pty" // kilocode_change
 import { Ripgrep } from "@opencode-ai/core/ripgrep"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionV2 } from "@opencode-ai/core/session"
@@ -263,6 +265,7 @@ const app = LayerNode.group([
   RuntimeFlags.node,
   EventV2Bridge.node,
   SessionRunState.node,
+  SessionDrain.node, // kilocode_change
   SessionProcessor.node,
   SessionCompaction.node,
   SessionRevert.node,
@@ -290,6 +293,7 @@ const app = LayerNode.group([
   ProjectV2.node,
   ProjectCopy.node,
   PtyTicket.node,
+  Pty.shutdownNode, // kilocode_change
 ])
 
 export function createRoutes(
@@ -324,8 +328,6 @@ export function createRoutes(
       HttpServer.layerServices,
     ]),
     Layer.provide(Layer.succeed(CorsConfig)(corsOptions)),
-    Layer.provideMerge(Observability.layer),
-
     Layer.provide(sessionLocationLayer),
     Layer.provide(locationLayer),
     Layer.provide(PtyEnvironment.layer),
@@ -338,6 +340,11 @@ export function createRoutes(
     Layer.provide(locationServiceMapV2),
 
     Layer.provide(AppNodeBuilderV1.build(app)),
+    // Must stay last: layers provided later in this pipe build beneath earlier ones,
+    // so Observability must come after every service graph. Otherwise eagerly forked
+    // fibers (e.g. the ModelsDev background refresh) capture Effect's default stdout
+    // logger and corrupt the TUI (#34730).
+    Layer.provideMerge(Observability.layer),
   )
 }
 

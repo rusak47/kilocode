@@ -21,6 +21,7 @@ import { InstanceStore } from "../../src/project/instance-store"
 import { Project } from "../../src/project/project"
 import { HttpApiApp } from "../../src/server/routes/instance/httpapi/server"
 import * as HttpSessionError from "../../src/server/routes/instance/httpapi/handlers/session-errors"
+import { ExperimentalPaths } from "../../src/server/routes/instance/httpapi/groups/experimental"
 import { SessionPaths } from "../../src/server/routes/instance/httpapi/groups/session"
 import { Session } from "@/session/session"
 import { MessageID, PartID, SessionID, type SessionID as SessionIDType } from "../../src/session/schema"
@@ -949,6 +950,78 @@ describe("session HttpApi", () => {
   )
 
   it.instance(
+    "lists sessions created through an equivalent directory hint",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const hint = test.directory + path.sep
+        const headers = { "x-kilo-directory": hint, "content-type": "application/json" }
+        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "hinted" }),
+        })
+
+        const query = new URLSearchParams({ directory: hint, roots: "true" })
+        const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?${query}`, { headers })
+        expect(listed.map((item) => item.id)).toContain(created.id)
+
+        const globalQuery = new URLSearchParams({ directory: hint })
+        const global = yield* requestJson<Session.Info[]>(`${ExperimentalPaths.session}?${globalQuery}`, { headers })
+        expect(global.map((item) => item.id)).toContain(created.id)
+      }),
+    { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
+  )
+
+  it.instance(
+    "lists Windows sessions for equivalent directory spellings",
+    () =>
+      Effect.gen(function* () {
+        if (process.platform !== "win32") return
+        const test = yield* TestInstance
+        const headers = { "x-kilo-directory": test.directory, "content-type": "application/json" }
+        const created = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "windows spelling" }),
+        })
+
+        const forwardSlashes = test.directory.replaceAll("\\", "/")
+        const lowercaseDrive = test.directory.replace(/^[A-Z]:/, (drive) => drive.toLowerCase())
+        const trailingSeparator = `${test.directory}\\`
+        for (const spelling of [forwardSlashes, lowercaseDrive, trailingSeparator]) {
+          const query = new URLSearchParams({ directory: spelling, roots: "true" })
+          const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?${query}`, { headers })
+          expect({ spelling, ids: listed.map((item) => item.id) }).toEqual({ spelling, ids: [created.id] })
+        }
+      }),
+    { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
+    { timeout: 15000 },
+  )
+
+  it.instance(
+    "lists Windows sessions created through the global worktree sentinel",
+    () =>
+      Effect.gen(function* () {
+        if (process.platform !== "win32") return
+        const globalWorktreeSentinel = "/"
+        const headers = { "x-kilo-directory": globalWorktreeSentinel, "content-type": "application/json" }
+        const driveRootSession = yield* requestJson<Session.Info>(SessionPaths.create, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ title: "created at drive root" }),
+        })
+        expect(driveRootSession.directory).toMatch(/^[A-Za-z]:\\$/)
+
+        const query = new URLSearchParams({ directory: globalWorktreeSentinel, roots: "true" })
+        const listed = yield* requestJson<Session.Info[]>(`${SessionPaths.list}?${query}`, { headers })
+        expect(listed.map((item) => item.id)).toContain(driveRootSession.id)
+      }),
+    { git: true, config: { formatter: false, lsp: false, share: "disabled" } },
+    { timeout: 15000 },
+  )
+
+  it.instance(
     "serves paginated message link headers",
     () =>
       Effect.gen(function* () {
@@ -1015,7 +1088,7 @@ describe("session HttpApi", () => {
 
   // kilocode_change start - deleting a prompt that already started is a successful no-op
   it.live(
-    "returns false when an active prompt wins the deletion race",
+    "only deletes queued messages before they start",
     () => {
       const release = Promise.withResolvers<void>()
       return Effect.gen(function* () {
@@ -1027,25 +1100,32 @@ describe("session HttpApi", () => {
         const messageID = MessageID.ascending()
         const headers = { "x-kilo-directory": dir, "content-type": "application/json" }
 
-        const prompt = yield* request(pathFor(SessionPaths.promptAsync, { sessionID: session.id }), {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            messageID,
-            agent: "build",
-            model: { providerID: "test", modelID: "test-model" },
-            parts: [{ type: "text", text: "keep running" }],
-          }),
-        })
-        expect(prompt.status).toBe(204)
+        const prompt = (messageID: MessageID) =>
+          request(pathFor(SessionPaths.promptAsync, { sessionID: session.id }), {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              messageID,
+              agent: "build",
+              model: { providerID: "test", modelID: "test-model" },
+              parts: [{ type: "text", text: "keep running" }],
+            }),
+          })
+        const remove = (messageID: MessageID) =>
+          requestJson<boolean>(
+            `${pathFor(SessionPaths.deleteMessage, { sessionID: session.id, messageID })}?queued=true`,
+            { method: "DELETE", headers },
+          )
+        expect((yield* prompt(messageID)).status).toBe(204)
         yield* llm.wait(1)
 
-        expect(
-          yield* requestJson<boolean>(pathFor(SessionPaths.deleteMessage, { sessionID: session.id, messageID }), {
-            method: "DELETE",
-            headers,
-          }),
-        ).toBe(false)
+        expect(yield* remove(messageID)).toBe(false)
+        const queued = MessageID.ascending()
+        expect((yield* prompt(queued)).status).toBe(204)
+        yield* pollWithTimeout(
+          remove(queued).pipe(Effect.map((success) => (success ? true : undefined))),
+          "Queued prompt was not removed",
+        )
 
         release.resolve()
         yield* pollWithTimeout(
@@ -1055,9 +1135,11 @@ describe("session HttpApi", () => {
           "Timed out waiting for active prompt to finish",
         )
 
+        expect(yield* remove(messageID)).toBe(false)
         const messages = yield* Session.use
           .messages({ sessionID: session.id })
           .pipe(provideInstanceEffect(dir), Effect.orDie)
+        expect(messages.some((message) => message.info.id === queued)).toBe(false)
         expect(messages.some((message) => message.info.id === messageID)).toBe(true)
         expect(
           messages.some((message) => message.info.role === "assistant" && message.info.parentID === messageID),
