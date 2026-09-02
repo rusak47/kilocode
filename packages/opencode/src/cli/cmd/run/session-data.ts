@@ -89,6 +89,9 @@ export type SessionData = {
   visible: Map<string, string>
   end: Set<string>
   echo: Map<string, Set<string>>
+  // kilocode_change start - one-time warning when the active model has no known context limit
+  warnedNoContext: boolean
+  // kilocode_change end
 }
 
 export type SessionDataInput = {
@@ -127,6 +130,9 @@ export function createSessionData(
     visible: new Map(),
     end: new Set(),
     echo: new Map(),
+    // kilocode_change start
+    warnedNoContext: false,
+    // kilocode_change end
   }
 }
 
@@ -153,8 +159,13 @@ function formatUsage(
     return undefined
   }
 
-  const text =
-    limit && limit > 0 ? `${Locale.number(total)} (${Math.round((total / limit) * 100)}%)` : Locale.number(total)
+  // kilocode_change start - a model with no known context limit disables auto-compaction;
+  // the bare token count would be a useless constant there, so show it only alongside a cost
+  if (typeof limit !== "number" || limit <= 0) {
+    return typeof cost === "number" && cost > 0 ? Locale.number(total) : undefined
+  }
+  const text = `${Locale.number(total)} (${Math.round((total / limit) * 100)}%)` // kilocode_change
+  // kilocode_change end
 
   if (typeof cost === "number" && cost > 0) {
     return `${text} · ${money.format(cost)}`
@@ -874,6 +885,20 @@ export function reduceSessionData(input: SessionDataInput): SessionDataOutput {
         usage,
       }
     }
+
+    // kilocode_change start - a model without a known context limit silently disables
+    // auto-compaction; warn once instead of letting the session grow past the provider's cap
+    const limit = input.limits[modelKey(info.providerID, info.modelID)]
+    if ((typeof limit !== "number" || limit <= 0) && !data.warnedNoContext) {
+      data.warnedNoContext = true
+      commits.push({
+        kind: "system",
+        text: "Auto-compaction disabled: model has no known context limit — long conversations may exceed the provider's limit",
+        phase: "start",
+        source: "system",
+      })
+    }
+    // kilocode_change end
 
     if (typeof info.id === "string" && info.error && !isAbort(info.error) && !data.ids.has(msgErr(info.id))) {
       data.ids.add(msgErr(info.id))

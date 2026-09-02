@@ -33,15 +33,18 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
       return {
         tokens: 0,
         percent: null,
+        unlimited: false,
       }
     }
 
     const tokens =
       last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache.read + last.tokens.cache.write
     const model = props.api.state.provider.find((item) => item.id === last.providerID)?.models[last.modelID]
+    const limit = model?.limit?.context
     return {
       tokens,
-      percent: model?.limit.context ? Math.round((tokens / model.limit.context) * 100) : null,
+      percent: limit ? Math.round((tokens / limit) * 100) : null,
+      unlimited: !limit,
     }
   })
 
@@ -55,15 +58,18 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
           <Show when={!open()}>
             <span style={{ fg: theme().textMuted }}>
               {" "}
-              ({state().percent ?? 0}% · {money.format(cost())})
+              ({state().unlimited ? "unlimited" : `${state().percent ?? 0}%`} · {money.format(cost())})
             </span>
           </Show>
         </text>
       </box>
       <Show when={open()}>
         <text fg={theme().textMuted}>{state().tokens.toLocaleString()} tokens</text>
-        <text fg={theme().textMuted}>{state().percent ?? 0}% used</text>
+        <text fg={theme().textMuted}>{state().unlimited ? "unlimited" : `${state().percent ?? 0}% used`}</text>
         <text fg={theme().textMuted}>{money.format(cost())} spent</text>
+        <Show when={state().unlimited}>
+          <text fg={theme().warning}>⚠ auto-compaction disabled (no context limit)</text>
+        </Show>
       </Show>
       {/* kilocode_change end */}
     </box>
