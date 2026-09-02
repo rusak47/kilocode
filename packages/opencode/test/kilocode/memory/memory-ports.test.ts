@@ -32,7 +32,12 @@ function mdl(id = mid, npm = "test-provider", providerID = pid): Provider.Model 
   } as unknown as Provider.Model
 }
 
-function lang(outputs: (string | Error)[] = ["{}"], calls?: unknown[], hang?: boolean): LanguageModelV3 {
+function lang(
+  outputs: (string | Error)[] = ["{}"], 
+  calls?: unknown[], 
+  caps?: (number | undefined)[], 
+  hang?: boolean
+): LanguageModelV3 {
   let idx = 0
   const next = () => {
     const item = outputs[idx++] ?? outputs.at(-1) ?? "{}"
@@ -45,6 +50,7 @@ function lang(outputs: (string | Error)[] = ["{}"], calls?: unknown[], hang?: bo
     modelId: "fake-memory-model",
     supportedUrls: {},
     doGenerate: async (...args: Parameters<LanguageModelV3["doGenerate"]>) => {
+      caps?.push(args[0]?.maxOutputTokens)
       calls?.push(args[0])
       if (hang) return new Promise(() => {})
       const text = next()
@@ -68,13 +74,14 @@ function lang(outputs: (string | Error)[] = ["{}"], calls?: unknown[], hang?: bo
 function provider(
   input: {
     outputs?: (string | Error)[]
-    seen?: string[]
+    seen?: string[] 
     calls?: unknown[]
     hang?: boolean
     npm?: string
     providerID?: ProviderV2.ID
+    caps?: (number | undefined)[] 
   } = {},
-): Provider.Interface {
+): Provider.Interface {  
   const providerID = input.providerID ?? pid
   const base = mdl(mid, input.npm, providerID)
   const mem = mdl(ModelV2.ID.make("memory-config-model"), input.npm, providerID)
@@ -96,7 +103,7 @@ function provider(
     },
     getLanguage: (model) => {
       input.seen?.push(model.id)
-      return Effect.succeed(lang(input.outputs, input.calls, input.hang))
+      return Effect.succeed(lang(input.outputs, input.calls, input.caps, input.hang))
     },
     closest: () => Effect.succeed({ providerID: pid, modelID: base.id }),
     getSmallModel: () => Effect.succeed(mem),
@@ -612,5 +619,25 @@ describe("memory ports", () => {
     const out2 = await again.run({ handle: resolved2.handle, system: "s", prompt: "p", timeoutMs: 30_000 })
     expect(out2.text).toBe("second")
     expect(called).toEqual(["stream", "stream"])
+  })
+
+  test("model port forwards the output cap as maxTokens and omits it when unset", async () => {
+    const caps: (number | undefined)[] = []
+    const port = MemoryModel.port({ provider: provider({ outputs: ["{}", "{}", "{}"], caps }) })
+
+    for (const maxOutputTokens of [2048, 8192, undefined]) {
+      const resolved = await Effect.runPromise(port.resolve({ session: ref }))
+      await port.run({
+        handle: resolved.handle,
+        system: "system",
+        prompt: "prompt",
+        timeoutMs: 30_000,
+        maxOutputTokens,
+      })
+    }
+
+    // mdl() declares limit.output = 4000; the cap is clamped to that model limit
+    // and is undefined (no maxTokens sent) when unset.
+    expect(caps).toEqual([2048, 4000, undefined])
   })
 })
