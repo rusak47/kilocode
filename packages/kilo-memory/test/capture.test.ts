@@ -6,6 +6,8 @@ import {
   fallbackDigest,
   guardReason,
   hasSubstantialDiff,
+  hasTypedOperations,
+  hasDigestKeys,
   hasUserEdit,
   mergeOps,
   notice,
@@ -29,18 +31,27 @@ describe("memory capture parsing", () => {
     expect(parsed).toEqual({ topic: "repo setup", summary: "Run package tests." })
   })
 
-  test("ignores additional digest fields from model output", () => {
+  test("allows extra keys in digest output that the schema does not define", () => {
     const parsed = parseJson(
       digestSchema,
-      JSON.stringify({
-        topic: "repo setup",
-        summary: "Run package tests.",
-        next_step: "Open a pull request.",
-        blockers: [],
-      }),
+      '{"topic":"repo setup","summary":"Run package tests.","next_step":"Open a pull request.","blockers":[]}',
     )
 
-    expect(parsed).toEqual({ topic: "repo setup", summary: "Run package tests." })
+    expect(parsed).toEqual({
+      topic: "repo setup",
+      summary: "Run package tests.",
+      next_step: "Open a pull request.",
+      blockers: [],
+    })
+  })
+
+  test("detects typed output missing the operations root key", () => {
+    // Bare array without {"operations": ...} wrapper
+    expect(() => salvageTyped(`[{"op":"upsert_project_fact","key":"good_one","value":"Keep this fact."}]`)).toThrow()
+  })
+
+  test("detects digest output with no JSON at all", () => {
+    expect(() => parseJson(digestSchema, "Topic: Compaction budget formula and chunk_size removal")).toThrow()
   })
 
   test("maps consolidation operation names into deterministic memory operations", () => {
