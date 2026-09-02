@@ -268,7 +268,6 @@ const ref = { providerID: "test", modelID: "fake-memory-model" }
 
 describe("memory ports", () => {
   beforeEach(() => resetStreamNeeded())
-
   test("session port extracts the latest turn, recall markers, and all assistant steps", async () => {
     const sessionID = SessionID.make("ses_memory_adapter")
     const uid = MessageID.make("msg_user")
