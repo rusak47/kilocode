@@ -1,5 +1,4 @@
----
-"@kilocode/cli": patch
----
+--- "@kilocode/cli": patch
+--- Retry on prompt-only empty streams when providers consume input tokens but produce no output. Tracks `outputTokens` separately so poisoned responses (e.g. `finish_reason: "network_error"` with `completion_tokens: 0`) fall through bounded retry budget instead of settling silently. Also widens transient provider error phrasing matched for retry; promotes bare prose errors into retryable `APIError` instead of `UnknownError`.
 
-Retry on prompt-only empty streams when providers consume input tokens but produce no output. Tracks `outputTokens` separately from usage so poisoned responses (e.g. `finish_reason: "network_error"` with `completion_tokens: 0`) fall through the bounded retry budget instead of settling silently. Also widens transient provider error phrasing matched for retry and promotes bare prose errors into retryable `APIError` instead of `UnknownError`.
+Retry empty streaming responses that report non-zero output tokens but finish with an unknown reason. Previously treated as complete; now they're retried through bounded recovery budget.

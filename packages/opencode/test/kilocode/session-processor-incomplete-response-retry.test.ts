@@ -107,7 +107,7 @@ function reasoning() {
   return [
     LLMEvent.stepStart({ index: 0 }),
     LLMEvent.reasoningStart({ id: "reasoning" }),
-    LLMEvent.reasoningDelta({ id: "reasoning", text: "Investigating the problem" }),
+    LLMEvent.reasoningDelta({ id: "reasoning", text: "Investigating problem" }),
     LLMEvent.reasoningEnd({ id: "reasoning" }),
     LLMEvent.stepFinish({ index: 0, reason: "unknown", usage }),
     LLMEvent.finish({ reason: "unknown", usage }),
@@ -354,6 +354,7 @@ describe("session processor incomplete response retry", () => {
           yield* ctx.test.reply(...reasoning())
           yield* ctx.test.reply(...reasoning())
           yield* ctx.test.reply(...reasoning())
+          yield* ctx.test.push(Stream.fail(new Error("unexpected extra llm call")))
           const delay = spyOn(SessionRetry, "delay").mockReturnValue(0)
 
           try {
@@ -368,10 +369,10 @@ describe("session processor incomplete response retry", () => {
           expect(yield* MessageV2.parts(ctx.msg.id)).toEqual([])
         }),
       { git: true },
-    ),
+    )
   )
 
-  it.effect("does not retry reasoning with a deliberate finish", () =>
+  it.effect("does not retry reasoning with deliberate finish", () =>
     provideTmpdirProject(
       (dir) =>
         Effect.gen(function* () {
