@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Duration, Effect } from "effect"
 import type { Agent } from "@/agent/agent"
 import type { Config } from "@/config/config"
 import type { Provider } from "@/provider/provider"
@@ -7,11 +7,13 @@ import type { LLM } from "@/session/llm"
 import { MessageV2 } from "@/session/message-v2"
 import { usable } from "@/session/overflow"
 import type { SessionProcessor } from "@/session/processor"
+import { SessionRetry } from "@/session/retry"
 import { MessageID, PartID, type SessionID } from "@/session/schema"
 import type { Session } from "@/session/session"
 import { Token } from "@/util/token"
 import * as Log from "@opencode-ai/core/util/log"
 import { Database } from "@opencode-ai/core/database/database"
+import { KiloCompactionThrottle } from "./compaction-throttle"
 
 type Update = <T extends MessageV2.Part>(part: T) => Effect.Effect<T>
 type UpdateMessage = <T extends MessageV2.Info>(msg: T) => Effect.Effect<T>
@@ -19,9 +21,9 @@ type UpdateMessage = <T extends MessageV2.Info>(msg: T) => Effect.Effect<T>
 const log = Log.create({ service: "kilocode.compaction.chunks" })
 const TOOL_OUTPUT_MAX_CHARS = 2_000
 const TRANSCRIPT_MAX_CHARS = 16_000
-const RATIO = 0.6
-const CONCURRENCY = 3
+const DEFAULT_CONCURRENCY = 3
 const DEPTH = 3
+const EMPTY_RETRIES = 2
 const OUTPUT = 2_048
 
 export namespace KiloCompactionChunks {
@@ -34,6 +36,10 @@ export namespace KiloCompactionChunks {
     result: SessionProcessor.Result
     output: string | undefined
     error: MessageV2.Assistant["error"]
+  }
+
+  type Work = Input & {
+    throttle?: KiloCompactionThrottle.Control
   }
 
   type Deps = {
@@ -107,10 +113,19 @@ export namespace KiloCompactionChunks {
 
   export function budget(input: { cfg: Config.Info; model: Provider.Model; outputTokenMax?: number }) {
     const mdl = model(input.model, input.outputTokenMax)
-    return Math.max(
-      1_000,
-      Math.floor(usable({ cfg: input.cfg, model: mdl, outputTokenMax: input.outputTokenMax }) * RATIO),
-    )
+    const raw = usable({ cfg: input.cfg, model: mdl, outputTokenMax: input.outputTokenMax })
+    const calculated = Math.max(1_000, raw)
+    log.debug("compaction budget", {
+      model: mdl.id,
+      provider: mdl.providerID,
+      context: mdl.limit.context,
+      input: mdl.limit.input,
+      output: mdl.limit.output,
+      rawUsable: raw,
+      budget: calculated,
+      reserved: input.cfg.compaction?.reserved,
+    })
+    return calculated
   }
 
   function model(input: Provider.Model, outputTokenMax?: number) {
@@ -153,6 +168,14 @@ export namespace KiloCompactionChunks {
         buf = next
       }
       if (buf.length) chunks.push({ index: chunks.length, messages: buf })
+      const sizes = chunks.map((chunk) => Token.estimate(JSON.stringify(chunk.messages)))
+      log.debug("compaction split", {
+        totalMessages: input.messages.length,
+        chunkCount: chunks.length,
+        budget: input.size,
+        chunkSizes: sizes,
+        avgChunkSize: sizes.length ? Math.round(sizes.reduce((a, b) => a + b, 0) / sizes.length) : 0,
+      })
       return chunks
     })
   }
@@ -246,11 +269,17 @@ export namespace KiloCompactionChunks {
     } satisfies MessageV2.Assistant
   }
 
-  function run(input: Input & { data: LLM.StreamInput["messages"]; text: string }) {
+  function attempt(input: Work & { data: LLM.StreamInput["messages"]; text: string }) {
     return Effect.gen(function* () {
       const msg = yield* input.session.updateMessage(assistant({ base: input.target, sessionID: input.sessionID }))
       const mdl = model(input.model, input.outputTokenMax)
-      const worker = yield* input.processors.create({ assistantMessage: msg, sessionID: input.sessionID, model: mdl })
+      const worker = yield* input.processors.create({
+        assistantMessage: msg,
+        sessionID: input.sessionID,
+        model: mdl,
+        gate: input.throttle?.gate,
+        retry: input.throttle?.retry,
+      })
       const opts = input.agent.options
       // agent.options feeds into providerOptions; strip maxOutputTokens
       // so it does not leak into the wire body. The output cap is enforced
@@ -280,18 +309,36 @@ export namespace KiloCompactionChunks {
       const result = out.result
       const output = out.output
       if (result !== "continue") return { result, output: undefined, error: out.error }
-      if (!output)
-        return {
-          result: "stop" as const,
-          output: undefined,
-          error:
-            out.error ??
-            new MessageV2.APIError({
-              message: "Compaction worker returned an empty response",
-              isRetryable: true,
-            }).toObject(),
-        }
-      return { result, output, error: undefined }
+      return { result, output, error: out.error }
+    })
+  }
+
+  function empty(error: MessageV2.Assistant["error"]) {
+    return {
+      result: "stop" as const,
+      output: undefined,
+      error:
+        error ??
+        new MessageV2.APIError({
+          message: "Compaction worker returned an empty response",
+          isRetryable: true,
+        }).toObject(),
+    }
+  }
+
+  function run(input: Work & { data: LLM.StreamInput["messages"]; text: string }) {
+    return Effect.gen(function* () {
+      for (const index of Array.from({ length: EMPTY_RETRIES + 1 }, (_, index) => index)) {
+        const output = yield* attempt(input)
+        if (output.result !== "continue" || output.output) return output
+        if (index === EMPTY_RETRIES) return empty(output.error)
+
+        const wait = SessionRetry.delay(index + 1)
+        log.warn("compaction worker returned empty output; retrying", { attempt: index + 1, wait })
+        yield* Effect.sleep(Duration.millis(wait))
+      }
+
+      return empty(undefined)
     })
   }
 
@@ -313,7 +360,7 @@ export namespace KiloCompactionChunks {
     })
   }
 
-  function summarize(input: Input & { chunk: Chunk; total: number }) {
+  function summarize(input: Work & { chunk: Chunk; total: number }) {
     return Effect.gen(function* () {
       const size = budget({ cfg: input.cfg, model: input.model, outputTokenMax: input.outputTokenMax })
       const data = (yield* large({ messages: input.chunk.messages, model: input.model, size }))
@@ -343,7 +390,7 @@ export namespace KiloCompactionChunks {
   }
 
   function reduce(
-    input: Input & { summaries: string[]; depth: number },
+    input: Work & { summaries: string[]; depth: number },
   ): Effect.Effect<Output, never, Database.Service> {
     return Effect.gen(function* () {
       const result = yield* run({ ...input, data: messages({ summaries: input.summaries }), text: input.prompt })
@@ -369,21 +416,35 @@ export namespace KiloCompactionChunks {
     return Effect.gen(function* () {
       const size = budget({ cfg: input.cfg, model: input.model, outputTokenMax: input.outputTokenMax })
       const chunks = yield* split({ messages: input.messages, model: input.model, size })
-      log.info("fallback", { chunks: chunks.length, concurrency: CONCURRENCY })
-
-      const partial = yield* Effect.forEach(chunks, (chunk) => summarize({ ...input, chunk, total: chunks.length }), {
-        concurrency: Math.min(CONCURRENCY, chunks.length),
+      const throttle = yield* KiloCompactionThrottle.make()
+      const work = { ...input, throttle }
+      const concurrency = Math.max(1, input.cfg.compaction?.chunk_concurrency ?? DEFAULT_CONCURRENCY)
+      log.info("fallback", {
+        chunks: chunks.length,
+        concurrency,
+        budget: size,
+        modelContext: input.model.limit.context,
+        modelInput: input.model.limit.input,
+        modelOutput: input.model.limit.output,
       })
-      const failed = partial.find(fatal) ?? partial.find((item) => item.result !== "continue" || !item.output)
-      if (failed) {
+
+      const partial = yield* Effect.forEach(chunks, (chunk) => summarize({ ...work, chunk, total: chunks.length }), {
+        concurrency: Math.min(concurrency, chunks.length),
+      })
+
+      const successful = partial.filter((item) => item.result === "continue" && item.output)
+      if (successful.length === 0) {
+        const failed = partial.find((item) => item.result !== "continue" || !item.output) ?? partial[0]
         if (yield* fail(input, failed)) return "stop" as const
         return "compact" as const
       }
 
+      const summaries = successful.map((item) => item.output!)
+      const hasFailures = successful.length < partial.length
       const final =
         chunks.length === 1 && (yield* large({ messages: chunks[0].messages, model: input.model, size }))
-          ? partial[0]
-          : yield* reduce({ ...input, summaries: partial.map((item) => item.output!), depth: 0 })
+          ? successful[0]
+          : yield* reduce({ ...work, summaries, depth: 0 })
       if (!final || final.result !== "continue" || !final.output) {
         if (yield* fail(input, final)) return "stop" as const
         return "compact" as const
@@ -400,7 +461,7 @@ export namespace KiloCompactionChunks {
       input.target.error = undefined
       input.target.time.completed = Date.now()
       yield* input.updateMessage(input.target)
-      return "continue" as const
+      return hasFailures ? ("continue-partial" as const) : ("continue" as const)
     })
   }
 }
