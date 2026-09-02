@@ -271,9 +271,14 @@ export namespace MemoryCapture {
             try: () => parseJson(digestSchema, result.result.text),
             catch: (error) => error,
           }).pipe(
-            Effect.catch(() =>
+            Effect.catch((err: unknown) =>
               Effect.gen(function* () {
+                const reason = MemoryRedact.text(errorReason(err))
                 yield* fail("digest parse_error")
+                yield* memory.append({
+                  root,
+                  text: `digest parse_error=${MemoryShared.brief(reason, 160)} full=${result.result.text} fallback=1`,
+                })
                 return undefined
               }),
             ),
@@ -392,9 +397,14 @@ export namespace MemoryCapture {
             try: () => salvageTyped(result.result.text),
             catch: (error) => error,
           }).pipe(
-            Effect.catch(() =>
+            Effect.catch((err: unknown) =>
               Effect.gen(function* () {
+                const reason = MemoryRedact.text(errorReason(err))
                 yield* fail("consolidate parse_error")
+                yield* memory.append({
+                  root,
+                  text: `consolidate parse_error=${MemoryShared.brief(reason, 160)} full=${result.result.text}`,
+                })
                 return undefined
               }),
             ),

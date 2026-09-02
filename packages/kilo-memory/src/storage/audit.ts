@@ -1,4 +1,5 @@
-/** Compatibility facade for the removed memory audit log. */
+import { MemoryLog } from "../effect/log"
+
 export namespace MemoryAudit {
   export type Decision =
     | {
@@ -33,14 +34,17 @@ export namespace MemoryAudit {
         }[]
       }
 
-  export async function append(root: string, text: string) {
+  function audit(root: string, input: Decision) {
     void root
-    void text
+    MemoryLog.debug("memory audit", input)
+  }
+
+  export async function append(root: string, text: string) {
+    await audit(root, { kind: "log", result: "logged", summary: text })
   }
 
   export async function decide(root: string, input: Decision) {
-    void root
-    void input
+    await audit(root, input)
   }
 
   export async function readDecisions(root: string) {
