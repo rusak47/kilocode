@@ -28,7 +28,8 @@ import { mapOpenAICompatibleFinishReason } from "./map-openai-compatible-finish-
 import { type OpenAICompatibleChatModelId, openaiCompatibleProviderOptions } from "./openai-compatible-chat-options"
 import { defaultOpenAICompatibleErrorStructure, type ProviderErrorStructure } from "../openai-compatible-error"
 import type { MetadataExtractor } from "./openai-compatible-metadata-extractor"
-import { prepareTools } from "./openai-compatible-prepare-tools"
+import { prepareTools } from "./openai-compatible-prepare-tools" // kilocode_change
+import { Log } from "../../util/log" // kilocode_change
 
 export type OpenAICompatibleChatConfig = {
   provider: string
@@ -49,6 +50,8 @@ export type OpenAICompatibleChatConfig = {
    */
   supportedUrls?: () => LanguageModelV3["supportedUrls"]
 }
+
+const log = Log.create({ service: "openai-compatible-chat" }) // kilocode_change
 
 export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
   readonly specificationVersion = "v3"
@@ -516,10 +519,14 @@ export class OpenAICompatibleChatLanguageModel implements LanguageModelV3 {
                 isActiveText = true
               }
 
+              const cleanContent = delta.content.replace(/<\/?think(ing)?>|<\/?reasoning>|<\/?thought>/gi, "") // kilocode_change
+              if (cleanContent !== delta.content) { // kilocode_change
+                log.debug("stripped thinking tags from content delta", { stripped: delta.content.length - cleanContent.length, sample: delta.content.slice(0, 80) }) // kilocode_change
+              } // kilocode_change
               controller.enqueue({
                 type: "text-delta",
                 id: "txt-0",
-                delta: delta.content,
+                delta: cleanContent, // kilocode_change
               })
             }
 
