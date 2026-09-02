@@ -38,14 +38,13 @@ export namespace MemoryAudit {
     void root
     MemoryLog.debug("memory audit", input)
   }
+
   export async function append(root: string, text: string) {
-    void root
-    void text
+    await audit(root, { kind: "log", result: "logged", summary: text })
   }
 
   export async function decide(root: string, input: Decision) {
-    void root
-    void input
+    await audit(root, input)
   }
 
   export async function readDecisions(root: string) {
