@@ -581,7 +581,7 @@ describe("memory ports", () => {
       }),
     })
     const resolved = await Effect.runPromise(port.resolve({ configured: "test/compat", session: ref }))
-    const out = await port.run({ handle: resolved.handle, system: "s", prompt: "p", timeoutMs: 30_000 })
+    const out = await port.run({ handle: resolved.handle, sessionID: "test-session", system: "s", prompt: "p", timeoutMs: 30_000 })
     expect(out.text).toBe("streamed result")
     expect(called).toEqual(["stream"])
   })
@@ -598,7 +598,7 @@ describe("memory ports", () => {
       }),
     })
     const resolved = await Effect.runPromise(port.resolve({ configured: "test/compat", session: ref }))
-    const out = await port.run({ handle: resolved.handle, system: "s", prompt: "p", timeoutMs: 30_000 })
+    const out = await port.run({ handle: resolved.handle, sessionID: "test-session", system: "s", prompt: "p", timeoutMs: 30_000 })
     expect(out.text).toBe("streamed result")
     expect(called).toEqual(["stream"])
   })
@@ -620,7 +620,7 @@ describe("memory ports", () => {
       }),
     })
     const resolved = await Effect.runPromise(port.resolve({ configured: "test/compat", session: ref }))
-    const out = await port.run({ handle: resolved.handle, system: "s", prompt: "p", timeoutMs: 30_000 })
+    const out = await port.run({ handle: resolved.handle, sessionID: "test-session", system: "s", prompt: "p", timeoutMs: 30_000 })
     expect(out.text).toBe('{"topic":"t","summary":"s"}')
     expect(called).toEqual([])
   })
@@ -642,7 +642,7 @@ describe("memory ports", () => {
       }),
     })
     const resolved = await Effect.runPromise(first.resolve({ configured: "test/compat", session: ref }))
-    const out = await first.run({ handle: resolved.handle, system: "s", prompt: "p", timeoutMs: 30_000 })
+    const out = await first.run({ handle: resolved.handle, sessionID: "test-session", system: "s", prompt: "p", timeoutMs: 30_000 })
     expect(out.text).toBe("first")
 
     const again = MemoryModel.port({
@@ -655,7 +655,7 @@ describe("memory ports", () => {
       }),
     })
     const resolved2 = await Effect.runPromise(again.resolve({ configured: "test/compat", session: ref }))
-    const out2 = await again.run({ handle: resolved2.handle, system: "s", prompt: "p", timeoutMs: 30_000 })
+    const out2 = await again.run({ handle: resolved2.handle, sessionID: "test-session", system: "s", prompt: "p", timeoutMs: 30_000 })
     expect(out2.text).toBe("second")
     expect(called).toEqual(["stream", "stream"])
   })
@@ -668,6 +668,7 @@ describe("memory ports", () => {
       const resolved = await Effect.runPromise(port.resolve({ session: ref }))
       await port.run({
         handle: resolved.handle,
+        sessionID: "test-session",
         system: "system",
         prompt: "prompt",
         timeoutMs: 30_000,
