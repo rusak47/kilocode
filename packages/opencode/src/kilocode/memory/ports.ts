@@ -178,6 +178,7 @@ async function memoryText(input: {
   topP?: number
   topK?: number
   signal?: AbortSignal
+  maxOutputTokens?: number
 }) {
   const ctl = new AbortController()
   const ms = Math.max(1, input.timeoutMs)
@@ -193,6 +194,16 @@ async function memoryText(input: {
     topP: input.topP,
     topK: input.topK,
     maxRetries: 1,
+    // kilocode_change start - output cap now driven by config (memory.max_output_tokens); unset => no cap
+    // so providers that reject an explicit maxOutputTokens field are unaffected. When set, the cap is
+    // clamped to the model's declared output limit (see ProviderTransform.maxOutputTokens), which
+    // also protects free-tier providers whose default output budget is too small to emit a full
+    // compact-JSON digest.
+    maxOutputTokens:
+      input.maxOutputTokens && input.maxOutputTokens > 0
+        ? ProviderTransform.maxOutputTokens(input.source, input.maxOutputTokens)
+        : undefined,
+    // kilocode_change end
   }
   const work = async () => {
     if (!openai) return generateText(common)
@@ -225,8 +236,7 @@ async function memoryText(input: {
 
 function modelOptions(model: Provider.Model, language: LanguageModelV3) {
   const options = consolidationOptions(model)
-  // No explicit output cap: valid output is already bounded by the compact-JSON prompt, the parser's
-  // 64KB guard, and the capture timeout — and some backends reject explicit caps outright.
+  // Output cap is not baked into the handle: it comes from memory.max_output_tokens config per run.
   const temperature = ProviderTransform.temperature(model)
   const topP = ProviderTransform.topP(model)
   const topK = ProviderTransform.topK(model)
@@ -314,7 +324,7 @@ export namespace MemoryModel {
           const language = yield* input.provider.getLanguage(source)
           return { handle: modelOptions(source, language), ...(reason ? { fallback: { reason } } : {}) }
         }).pipe(Effect.mapError(MemoryError.from)),
-      run: ({ handle, system, prompt, timeoutMs, signal }) => {
+      run: ({ handle, system, prompt, timeoutMs, signal, maxOutputTokens }) => {
         const resolved = handle as ModelHandle
         return memoryText({
           source: resolved.source,
@@ -327,6 +337,7 @@ export namespace MemoryModel {
           topP: resolved.topP,
           topK: resolved.topK,
           signal,
+          maxOutputTokens,
         })
       },
     }
