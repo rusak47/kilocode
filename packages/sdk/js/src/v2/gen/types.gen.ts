@@ -2697,8 +2697,14 @@ export type Config = {
     prune?: boolean
     tail_turns?: number
     preserve_recent_tokens?: number
-    reserved?: number
+     reserved?: number
   }
+  // kilocode_change start - bounded diff limits for sidebar rendering
+  diff?: {
+    max_files?: number
+    max_patch_bytes?: number
+  }
+  // kilocode_change end
   experimental?: {
     disable_paste_summary?: boolean
     batch_tool?: boolean
