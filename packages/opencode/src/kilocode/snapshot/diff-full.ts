@@ -14,6 +14,7 @@ import { Effect } from "effect"
 import { parsePatch } from "diff"
 import type { StructuredPatch } from "diff"
 import * as Log from "@opencode-ai/core/util/log"
+import { truncatePatchBytes } from "@/util/truncate-diff"
 
 export namespace DiffFull {
   const log = Log.create({ service: "snapshot.diff-full" })
@@ -88,6 +89,10 @@ export namespace DiffFull {
   // to the hunk-only view rather than shipping tens of MB of text over RPC.
   export const MAX_DETAIL_SIZE = 20 * 1024 * 1024
 
+  // kilocode_change start - patch byte limit to avoid UI freeze when patches are huge
+  export const MAX_PATCH_BYTES = 102_400
+  // kilocode_change end
+
   /**
    * Authoritative full-content detail for one file between two snapshot refs, for the editor diff
    * tab. Returns status, additions/deletions, the hunk patch, and the whole before/after file
@@ -119,13 +124,17 @@ export namespace DiffFull {
     const deletions = binary ? 0 : Number.parseInt(dels ?? "0", 10)
 
     const patch = binary ? "" : ((yield* batch(run.diff, from, to, [path])).get(path) ?? "")
+    // kilocode_change start - truncate patch if too large
+    const patchTrunc = truncatePatchBytes(patch, MAX_PATCH_BYTES)
     const base = {
       file: path,
-      patch,
+      patch: patchTrunc.content,
       additions: Number.isFinite(additions) ? additions : 0,
       deletions: Number.isFinite(deletions) ? deletions : 0,
       status,
+      truncated: patchTrunc.truncated,
     }
+    // kilocode_change end
     // Uniform shape across branches: binary files carry no content, but keep the keys present
     // (undefined) so the return type is a single object, not a union missing before/after.
     if (binary) return { ...base, before: undefined, after: undefined }

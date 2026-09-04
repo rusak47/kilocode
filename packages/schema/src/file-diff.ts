@@ -6,6 +6,9 @@ import { optional } from "./schema"
 export const Info = Schema.Struct({
   file: optional(Schema.String),
   patch: optional(Schema.String),
+  // kilocode_change start - truncation indicator
+  truncated: optional(Schema.Boolean).annotate({ description: "true when the patch was truncated due to size limits" }),
+  // kilocode_change end
   before: optional(Schema.String), // kilocode_change - full-content sides for editor diff tabs
   after: optional(Schema.String), // kilocode_change - full-content sides for editor diff tabs
   additions: Schema.Finite,
