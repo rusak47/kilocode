@@ -266,6 +266,20 @@ export const Info = Schema.Struct({
     description:
       "Thresholds for truncating tool output. When output exceeds either limit, the full text is written to the truncation directory and a preview is returned.",
   }),
+  // kilocode_change start - bounded diff limits Files sidebar
+  diff: Schema.optional(
+    Schema.Struct({
+      max_files: Schema.optional(PositiveInt).annotate({
+        description: "Maximum number of files rendered in the Files sidebar (default: 1000)",
+      }),
+      max_patch_bytes: Schema.optional(PositiveInt).annotate({
+        description: "Maximum patch bytes per file before content is truncated (default: 102400)",
+      }),
+    }),
+  ).annotate({
+    description: "Defensive rendering limits for diffs. Caps the number of file rows shown and the per-file patch size to prevent UI freezes on large changesets.",
+  }),
+  // kilocode_change end
   compaction: Schema.optional(
     Schema.Struct({
       auto: Schema.optional(Schema.Boolean).annotate({
