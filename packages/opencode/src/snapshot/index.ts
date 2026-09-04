@@ -874,8 +874,6 @@ export const layer: Layer.Layer<Service, never, Requirements> =
                 const conf = yield* Config.Service
                 const info = yield* conf.get()
                 const maxPatchBytes = info.diff?.max_patch_bytes ?? 102_400
-                // kilocode_change end
-                // kilocode_change start
                 const maxFiles = info.diff?.max_files ?? 1000
                 // kilocode_change end
                 const step = maxFiles
