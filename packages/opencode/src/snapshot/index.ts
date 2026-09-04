@@ -11,6 +11,9 @@ import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Hash } from "@opencode-ai/core/util/hash"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock" // kilocode_change
 import { Config } from "@/config/config"
+// kilocode_change start - import truncation util for bounded diff limits in sidebar
+import { truncatePatchBytes } from "@/util/truncate-diff"
+// kilocode_change end
 import { Global } from "@opencode-ai/core/global"
 import { Info } from "@opencode-ai/schema/file-diff"
 // kilocode_change start
@@ -838,7 +841,16 @@ export const layer: Layer.Layer<Service, never, Requirements> =
                   rows.push(...filtered)
                 }
 
-                const step = 100
+
+                // kilocode_change start - bounded diff limits for sidebar
+                const conf = yield* Config.Service
+                const info = yield* conf.get()
+                const maxPatchBytes = info.diff?.max_patch_bytes ?? 102_400
+                // kilocode_change end
+                // kilocode_change start
+                const maxFiles = info.diff?.max_files ?? 1000
+                // kilocode_change end
+                const step = maxFiles
                 const patch = (file: string, before: string, after: string) =>
                   formatPatch(structuredPatch(file, file, before, after, "", "", { context: Number.MAX_SAFE_INTEGER }))
 
@@ -852,13 +864,18 @@ export const layer: Layer.Layer<Service, never, Requirements> =
                     run.filter((row) => !row.binary).map((row) => row.file),
                   )
                   for (const row of run) {
+                    // kilocode_change start - bound per-file patch size
+                    const patchText = row.binary ? "" : (patches.get(row.file) ?? "")
+                    const trunc = truncatePatchBytes(patchText, maxPatchBytes)
                     result.push({
                       file: row.file,
-                      patch: row.binary ? "" : (patches.get(row.file) ?? ""),
+                      patch: trunc.content,
                       additions: row.additions,
                       deletions: row.deletions,
                       status: row.status,
+                      truncated: trunc.truncated,
                     })
+                    // kilocode_change end
                   }
                 }
                 return result
@@ -871,13 +888,18 @@ export const layer: Layer.Layer<Service, never, Requirements> =
                   for (const row of run) {
                     const hit = text?.get(row.file) ?? { before: "", after: "" }
                     const [before, after] = row.binary ? ["", ""] : text ? [hit.before, hit.after] : yield* show(row)
+                    // kilocode_change start - bound per-file patch size
+                    const patchText = row.binary ? "" : patch(row.file, before, after)
+                    const trunc = truncatePatchBytes(patchText, maxPatchBytes)
                     result.push({
                       file: row.file,
-                      patch: row.binary ? "" : patch(row.file, before, after),
+                      patch: trunc.content,
                       additions: row.additions,
                       deletions: row.deletions,
                       status: row.status,
+                      truncated: trunc.truncated,
                     })
+                    // kilocode_change end
                   }
                 }
 
@@ -911,7 +933,7 @@ export const layer: Layer.Layer<Service, never, Requirements> =
           })
           // kilocode_change end
 
-          return { cleanup, track, patch, restore, revert, diff, diffFull, diffFile } // kilocode_change - diffFile
+          return { cleanup, track, patch, restore, revert, diff, diffFull, diffFile } as State // kilocode_change - diffFile cast to State
         }),
       )
 

@@ -458,6 +458,9 @@ export type TuiSidebarFileItem = {
   file: string
   additions: number
   deletions: number
+  // kilocode_change start - truncation indicator
+  truncated?: boolean
+  // kilocode_change end
 }
 
 export type TuiHostSlotMap = {

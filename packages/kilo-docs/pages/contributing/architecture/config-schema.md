@@ -65,6 +65,19 @@ Nested CLI fields outside these buckets need dedicated overlay bucket and matchi
 
 ## Failure mode
 
+## `diff` config (TUI only)
+
+The `diff` key is read by the TUI's Modified Files sidebar panel. It is not consumed by the CLI runtime or editor extensions.
+
+<!-- kilocode_change start -->
+TUI Files sidebar rendering limits (defensive cap).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `diff.max_files` | int | 1000 | Maximum number file entries rendered in TUI Files sidebar. Excess files still available via snapshot diff API. |
+| `diff.max_patch_bytes` | int | 102400 | Per-file patch size cutoff in snapshot diff API. Patches exceeding truncated marked `truncated: true`. |
+<!-- kilocode_change end -->
+
 If cloud overlay misses valid CLI field, CLI can accept config while editor reports `unknown property`. Opposite drift is also possible: cloud schema can advertise field that runtime no longer accepts.
 
 Treat schema synchronization as cross-repository contract. Tests should detect both missing valid fields and stale overlay entries. Keep branch-specific drift findings in tracked issues or test output, not this architecture page.
