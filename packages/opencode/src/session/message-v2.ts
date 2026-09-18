@@ -39,7 +39,8 @@ import { Snapshot } from "@/snapshot" // kilocode_change
 import { SessionNetwork } from "./network" // kilocode_change
 import { CodexAuthExpiredError } from "@/kilocode/provider/codex-refresh" // kilocode_change
 import { KiloSessionMessageOrder } from "@/kilocode/session/message-order" // kilocode_change
-import { KiloPartLifecycle } from "@/kilocode/session/part-lifecycle" // kilocode_change
+import { KiloPartLifecycle } from "@/kilocode/session/part-lifecycle"
+import { mcpProbe } from "@/kilocode/mcp-probe" // kilocode_trace // kilocode_change
 import * as TextStream from "@/kilocode/text-stream" // kilocode_change
 import { BoardNotice } from "@/kilocode/board/notice" // kilocode_change
 import { Effect, Schema } from "effect"
@@ -285,6 +286,7 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
 
   const toModelOutput = (options: { toolCallId: string; input: unknown; output: unknown }) => {
     const output = options.output
+    mcpProbe("C_toModelOutput_envelope", output) // kilocode_trace
     if (typeof output === "string") {
       return { type: "text", value: output }
     }
@@ -539,15 +541,18 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
 
   const tools = Object.fromEntries(Array.from(toolNames).map((toolName) => [toolName, { toModelOutput }]))
 
-  return yield* Effect.promise(() =>
-    convertToModelMessages(
+  return yield* Effect.promise(() =>{
+    // kilocode_trace start
+    mcpProbe("H_toModelMessages_result", result)
+    // kilocode_trace end
+    return convertToModelMessages(
       result.filter((msg) => msg.parts.some((part) => part.type !== "step-start")),
       {
         //@ts-expect-error (convertToModelMessages expects a ToolSet but only actually needs tools[name]?.toModelOutput)
         tools,
       },
-    ),
-  )
+    )
+  })
 })
 
 export function toModelMessages(

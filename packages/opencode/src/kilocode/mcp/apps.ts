@@ -2,6 +2,7 @@ import { Effect, Schema } from "effect"
 import { HttpApiError } from "effect/unstable/httpapi"
 import type { MCP } from "@/mcp"
 import type { RuntimeFlags } from "@/effect/runtime-flags"
+import { mcpProbe } from "@/kilocode/mcp-probe" // kilocode_trace
 
 /**
  * MCP Apps lets MCP servers advertise UI resources alongside their tools. This module owns all the
@@ -60,6 +61,14 @@ export namespace McpApps {
         Effect.tapError((err) => Effect.logError("MCP callTool failed", { error: err })),
         Effect.mapError(() => new HttpApiError.BadRequest({})),
       )
+      // kilocode_trace start - capture RAW MCP server response via HTTP app endpoint
+      mcpProbe("G_apps_raw_result", result)
+      mcpProbe("G_apps_content_items", result.content)
+      for (const item of (result.content ?? []) as Array<{ type?: string; text?: unknown }>) {
+        if (item.type === "text") mcpProbe("G_apps_text_item", item.text)
+      }
+      mcpProbe("G_apps_structuredContent", result.structuredContent)
+      // kilocode_trace end
       return {
         content: result.content ?? [],
         ...(result.isError ? { isError: true } : {}),

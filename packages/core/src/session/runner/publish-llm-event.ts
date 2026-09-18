@@ -45,6 +45,18 @@ type SettledOutput =
 
 const settledOutput = (value: ToolOutput | undefined, result: ToolResultValue): SettledOutput => {
   if (result.type === "error") return { error: { type: "unknown", message: message(result.value) } }
+  // kilocode_trace start
+  {
+    const label = "F_settledOutput_result_value"
+    const v = result.value
+    const s = typeof v === "string" ? v : ""
+    const c1 = (s.match(/\\(?=")/g) ?? []).length
+    const c2 = (s.match(/\\\\(?=")/g) ?? []).length
+    console.error(
+      `\n\n[kilocode_trace:${label}] type=${typeof v} singleBsQuote=${c1} doubleBsQuote=${c2} raw=${JSON.stringify(v)}\n\n`,
+    )
+  }
+  // kilocode_trace end
   const settled = value ?? ToolOutput.fromResultValue(result)
   if (!settled) throw new Error(`Unsupported tool result: ${message(result)}`)
   return { structured: record(settled.structured), content: settled.content }
@@ -345,6 +357,18 @@ export const createLLMEventPublisher = (events: EventV2.Interface, input: Input)
         }
         tool.settled = true
         const result = settledOutput(event.output, event.result)
+        // kilocode_trace start
+        {
+          const label = "F_publish_toolResult_value"
+          const v = event.result?.value
+          const s = typeof v === "string" ? v : ""
+          const c1 = (s.match(/\\(?=")/g) ?? []).length
+          const c2 = (s.match(/\\\\(?=")/g) ?? []).length
+          console.error(
+            `[kilocode_trace:${label}] type=${typeof v} singleBsQuote=${c1} doubleBsQuote=${c2} raw=${JSON.stringify(v).slice(0, 160)}`,
+          )
+        }
+        // kilocode_trace end
         const provider = {
           executed: event.providerExecuted === true || tool.providerExecuted,
           ...(event.providerMetadata === undefined ? {} : { metadata: event.providerMetadata }),

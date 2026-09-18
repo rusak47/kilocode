@@ -31,6 +31,7 @@ import { Config } from "@/config/config"
 import { PermissionProvenance } from "@/kilocode/permission/provenance"
 import { McpApps } from "@/kilocode/mcp/apps"
 import { BoardEnabled } from "@/kilocode/board/enabled"
+import { mcpProbe } from "@/kilocode/mcp-probe" // kilocode_trace
 // kilocode_change end
 import { isRecord } from "@/util/record"
 import { RuntimeFlags } from "@/effect/runtime-flags"
@@ -575,6 +576,13 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             })),
             content: result.content,
           }
+          // kilocode_trace start
+          mcpProbe("A_tools_finish_output", truncated.content)
+          mcpProbe(
+            "A_content_0_text",
+            Array.isArray(result.content) ? (result.content[0] as { text?: unknown })?.text : undefined,
+          )
+          // kilocode_trace end
           return yield* finish(key, output, opts) // kilocode_change
         }),
       )

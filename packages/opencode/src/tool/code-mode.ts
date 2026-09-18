@@ -10,6 +10,7 @@ import { Permission } from "@/permission"
 import { Plugin } from "@/plugin"
 import * as SandboxPolicy from "@/kilocode/sandbox/policy" // kilocode_change
 import { EffectBridge } from "@/effect/bridge" // kilocode_change
+import { mcpProbe } from "@/kilocode/mcp-probe" // kilocode_trace
 
 export const CODE_MODE_TOOL = "execute"
 
@@ -173,6 +174,14 @@ const invokeChildTool = Effect.fn("CodeMode.invokeChildTool")(function* (input: 
                   .filter((text) => text.trim())
                   .join("\n\n") || "MCP tool returned an error",
               )
+            // kilocode_trace start - capture RAW MCP server response from code-mode tunnel (bypasses catalog wrapper)
+            mcpProbe("G_codeMode_raw_result", raw)
+            mcpProbe("G_codeMode_content_items", Array.isArray(raw.content) ? raw.content : undefined)
+            for (const item of (raw.content ?? []) as Array<{ type?: string; text?: unknown }>) {
+              if (item.type === "text") mcpProbe("G_codeMode_text_item", item.text)
+            }
+            mcpProbe("G_codeMode_structuredContent", raw.structuredContent)
+            // kilocode_trace end
             return raw
           })
         }),

@@ -241,12 +241,16 @@ const project = (
   parameters: unknown,
   callID: ToolCallPart["id"],
   output: unknown,
-): ToolOutputType =>
-  ToolOutput.make(
+): ToolOutputType => {
+  // kilocode_trace start
+  console.error(`\n[kilocode_trace:J_tool_project_input] type=${typeof output} value=${JSON.stringify(output).slice(0, 200)}`)
+  // kilocode_trace end
+  return ToolOutput.make(
     toStructuredOutput?.(output) ?? output,
     toModelOutput?.({ callID, parameters, output }) ??
       (typeof output === "string" ? [{ type: "text", text: output }] : []),
   )
+}
 
 export { ToolFailure }
 

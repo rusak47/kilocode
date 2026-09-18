@@ -7,6 +7,7 @@ import { iife } from "@/util/iife"
 import { kiloProviderOptions } from "@/kilocode/provider-options"
 import { isLing } from "@/kilocode/model-match" // kilocode_change
 import { reasoningSummary } from "@/kilocode/provider/reasoning-summary" // kilocode_change
+import { mcpProbe } from "@/kilocode/mcp-probe" // kilocode_trace
 
 type Modality = NonNullable<ModelsDev.Model["modalities"]>["input"][number]
 
@@ -107,13 +108,25 @@ function normalizeMessages(
   _options: Record<string, unknown>,
 ): ModelMessage[] {
   const sanitizeToolResultOutput = (content: ToolResultPart) => {
+    // kilocode_trace start
+    mcpProbe("F_sanitizeToolResultInput", content)
+    mcpProbe("F_sanitizeToolResult_input_value", content.output)
+    // kilocode_trace end
     if (content.output.type === "text" || content.output.type === "error-text") {
+      // kilocode_trace start
+      mcpProbe("E_transform_toolresult_output_value", content.output.value)
       content.output.value = sanitizeSurrogates(content.output.value)
+      mcpProbe("E_transform_toolresult_output_serialized", content.output.value)
+      // kilocode_trace end
     }
     if (content.output.type === "content") {
       content.output.value = content.output.value.map((item) => {
         if (item.type === "text") {
+          // kilocode_trace start
+          mcpProbe("E_transform_toolresult_content_text", item.text)
           item.text = sanitizeSurrogates(item.text)
+          mcpProbe("E_transform_toolresult_content_serialized", item.text)
+          // kilocode_trace end
         }
         return item
       })
@@ -123,15 +136,20 @@ function normalizeMessages(
 
   msgs = msgs.map((msg) => {
     switch (msg.role) {
-      case "tool":
+      case "tool": {
         if (!Array.isArray(msg.content)) return msg
+        // kilocode_trace start
+        mcpProbe("F_tool_message_before", msg)
         msg.content = msg.content.map((content) => {
           if (content.type === "tool-result") {
             return sanitizeToolResultOutput(content)
           }
           return content
         })
+        mcpProbe("F_tool_message_after", msg)
+        // kilocode_trace end
         return msg
+      }
 
       case "system":
         msg.content = sanitizeSurrogates(msg.content)

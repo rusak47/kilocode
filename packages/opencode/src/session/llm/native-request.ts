@@ -12,6 +12,7 @@ import {
 import type { ModelMessage } from "ai"
 import type { Provider } from "@/provider/provider"
 import { isRecord } from "@/util/record"
+import { mcpProbe } from "@/kilocode/mcp-probe" // kilocode_trace
 
 type ToolInput = {
   readonly description?: string
@@ -78,6 +79,9 @@ const toolResult = (part: Record<string, unknown>) => {
 }
 
 const contentPart = (part: unknown) => {
+  // kilocode_trace start
+  mcpProbe("I_toolResult_part", part)
+  // kilocode_trace end
   if (!isRecord(part)) throw new Error("Native LLM request adapter only supports object content parts")
   if (part.type === "text") return textPart(part)
   if (part.type === "file") return mediaPart(part)
@@ -182,6 +186,10 @@ export const request = (input: RequestInput) => {
   const converted = messages(input.messages)
   // This is the only native adapter boundary that should construct canonical
   // @opencode-ai/llm request objects from opencode's session/AI SDK-shaped data.
+  // kilocode_trace start
+  mcpProbe("I_native_request_messages", input.messages)
+  mcpProbe("I_native_request_tool_choice", input.toolChoice)
+  // kilocode_trace end
   return LLM.request({
     model: model(input, input.headers),
     system: [...(input.system ?? []).map(SystemPart.make), ...converted.system],

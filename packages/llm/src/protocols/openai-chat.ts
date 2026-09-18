@@ -267,6 +267,9 @@ const lowerToolMessages = Effect.fn("OpenAIChat.lowerToolMessages")(function* (m
   for (const part of message.content) {
     if (!ProviderShared.supportsContent(part, ["tool-result"]))
       return yield* ProviderShared.unsupportedContent("OpenAI Chat", "tool", ["tool-result"])
+    // kilocode_trace start
+    console.error(`\n[kilocode_trace:L_openai_tool_part] result.type=${(part as any).result?.type} raw=${JSON.stringify(part)}`)
+    // kilocode_trace end
     if (part.result.type !== "content") {
       messages.push({ role: "tool", tool_call_id: part.id, content: ProviderShared.toolResultText(part) })
       continue

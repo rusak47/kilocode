@@ -4,6 +4,7 @@ import { type streamText } from "ai"
 import { errorMessage } from "@/util/error"
 import { KiloRoutedModel } from "@/kilocode/session/routed-model" // kilocode_change
 import { KiloResponseMetadata } from "@/kilocode/session/response-metadata" // kilocode_change
+import { mcpProbe } from "@/kilocode/mcp-probe" // kilocode_trace
 
 type Result = Awaited<ReturnType<typeof streamText>>
 type AISDKEvent = Result["fullStream"] extends AsyncIterable<infer T> ? T : never
@@ -229,6 +230,9 @@ export function toLLMEvents(
     case "tool-call":
       return Effect.sync(() => {
         state.toolNames[event.toolCallId] = event.toolName
+        // kilocode_trace start
+        mcpProbe("J_aiSdk_event_toolcall_input", event.input)
+        // kilocode_trace end
         return [
           LLMEvent.toolCall({
             id: event.toolCallId,
@@ -244,6 +248,7 @@ export function toLLMEvents(
       return Effect.sync(() => {
         const name = state.toolNames[event.toolCallId] ?? "unknown"
         delete state.toolNames[event.toolCallId]
+        mcpProbe("D_aiSdk_event_output", event.output) // kilocode_trace
         return [
           LLMEvent.toolResult({
             id: event.toolCallId,

@@ -7,6 +7,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js"
 import { dynamicTool, jsonSchema, type JSONSchema7, type Tool } from "ai"
 import { Effect } from "effect"
+import { mcpProbe } from "@/kilocode/mcp-probe" // kilocode_trace
 
 const DEFAULT_TIMEOUT = 30_000
 const MAX_LIST_PAGES = 1_000
@@ -65,6 +66,19 @@ export function convertTool(mcpTool: MCPToolDef, client: Client, timeout?: numbe
           onprogress: () => {},
         },
       )
+      // kilocode_trace start - capture RAW MCP server response before any wrapper serialization
+      mcpProbe("G_raw_mcp_callTool_result", result)
+      mcpProbe(
+        "G_raw_mcp_content_items",
+        Array.isArray((result as { content?: unknown }).content)
+          ? (result as { content: unknown[] }).content
+          : undefined,
+      )
+      for (const item of (result as { content?: Array<{ type?: string; text?: unknown }> }).content ?? []) {
+        if (item.type === "text") mcpProbe("G_raw_mcp_content_text", item.text)
+      }
+      mcpProbe("G_raw_mcp_structuredContent", (result as { structuredContent?: unknown }).structuredContent)
+      // kilocode_trace end
       if (result.isError)
         throw new Error(
           result.content
