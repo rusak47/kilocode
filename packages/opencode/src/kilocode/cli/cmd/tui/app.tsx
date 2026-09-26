@@ -142,12 +142,6 @@ export function useSessionEffects(deps: {
       .catch(() => {})
   })
 
-  createEffect(
-    on(session, (current, prev) => {
-      if (prev && prev !== current) deps.sync.session.evict(prev)
-    }),
-  )
-
   onCleanup(() => {
     renderer.off("focus", onFocus)
     renderer.off("blur", onBlur)

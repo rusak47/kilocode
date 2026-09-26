@@ -253,8 +253,12 @@ export function Session() {
         )
       : [],
   )
-  const permissions = createMemo(() => {
-    if (session()?.parentID) return []
+const permissions = createMemo(() => {
+    const s = session()
+    if (!s) return []
+    if (s.parentID) {
+      return sync.data.permission[s.id] ?? [] // show own pending in subagent view
+    }
     return children().flatMap((x) => sync.data.permission[x.id] ?? [])
   })
   const questions = createMemo(() => {
@@ -467,7 +471,7 @@ export function Session() {
 
     if (kv.get(keys.dontShow)) return
 
-    void DialogRetryAction.show(dialog, evt.properties.status.action).then((dontShowAgain) => {
+void DialogRetryAction.show(dialog, evt.properties.status.action).then((dontShowAgain) => {
       if (dontShowAgain) kv.set(keys.dontShow, true)
       kv.set(keys.lastSeenAt, Date.now())
     })
